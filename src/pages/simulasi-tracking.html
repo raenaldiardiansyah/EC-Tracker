@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Peta Rute Angkutan Bojongsoang</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css"/>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --surface2: #22263a;
+            --border: #2e3349;
+            --accent: #4ade80;
+            --accent2: #38bdf8;
+            --text: #e8eaf0;
+            --text-muted: #6b7280;
+            --red: #EF4444;
+            --blue: #3B82F6;
+            --green: #10B981;
+            --amber: #F59E0B;
+            --purple: #8B5CF6;
+            --pink: #EC4899;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-shrink: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        header h1 {
+            font-family: 'Space Mono', monospace;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: var(--text);
+        }
+
+        header p {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 1px;
+        }
+
+        .main {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* SIDEBAR */
+        .sidebar {
+            width: 300px;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        .sidebar-inner {
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .sidebar-inner::-webkit-scrollbar { width: 4px; }
+        .sidebar-inner::-webkit-scrollbar-track { background: transparent; }
+        .sidebar-inner::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+        .section-label {
+            font-family: 'Space Mono', monospace;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .koridor-filter {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .koridor-chip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .koridor-chip:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
+        .koridor-chip .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .select-wrapper {
+            position: relative;
+        }
+
+        select {
+            width: 100%;
+            padding: 10px 36px 10px 12px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 12px;
+            cursor: pointer;
+            appearance: none;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        select:focus { border-color: var(--accent); }
+
+        .select-wrapper::after {
+            content: '▾';
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            pointer-events: none;
+            font-size: 12px;
+        }
+
+        .btn-cari {
+            width: 100%;
+            padding: 11px;
+            background: linear-gradient(135deg, var(--accent), #22c55e);
+            border: none;
+            border-radius: 8px;
+            color: #0a1a0a;
+            font-family: 'Space Mono', monospace;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn-cari:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(74, 222, 128, 0.3);
+        }
+
+        .btn-cari:active { transform: translateY(0); }
+
+        .route-summary {
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--accent);
+            border-radius: 8px;
+            padding: 12px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .route-summary.visible { display: flex; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .route-stat {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .route-stat-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--surface);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .route-stat-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            font-family: 'Space Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .route-stat-value {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--accent);
+            line-height: 1;
+            margin-top: 2px;
+        }
+
+        .divider {
+            height: 1px;
+            background: var(--border);
+        }
+
+        /* LEGEND */
+        .legend {
+            padding: 14px 16px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .legend-title {
+            font-family: 'Space Mono', monospace;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .legend-items {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .legend-line {
+            width: 20px;
+            height: 3px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        /* MAP */
+        #map {
+            flex: 1;
+            background: #0d1117;
+        }
+
+        /* Leaflet overrides */
+        .leaflet-popup-content-wrapper {
+            background: var(--surface) !important;
+            color: var(--text) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 10px !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
+        }
+
+        .leaflet-popup-tip {
+            background: var(--surface) !important;
+        }
+
+        .leaflet-routing-container { display: none !important; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo">🚌</div>
+    <div>
+        <h1>TRANS BOJONGSOANG</h1>
+        <p>Sistem Informasi Angkutan Umum — Bandung Selatan</p>
+    </div>
+</header>
+
+<div class="main">
+    <div class="sidebar">
+        <div class="sidebar-inner">
+
+            <!-- Cari Rute -->
+            <div>
+                <div class="section-label">Cari Rute</div>
+
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                    <div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Dari Halte</div>
+                        <div class="select-wrapper">
+                            <select id="start-halte"></select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Ke Halte</div>
+                        <div class="select-wrapper">
+                            <select id="end-halte"></select>
+                        </div>
+                    </div>
+
+                    <button class="btn-cari" id="cari-rute">▶ CARI RUTE</button>
+                </div>
+            </div>
+
+            <!-- Hasil -->
+            <div id="route-summary" class="route-summary">
+                <div class="route-stat">
+                    <div class="route-stat-icon">📍</div>
+                    <div>
+                        <div class="route-stat-label">Jarak</div>
+                        <div class="route-stat-value" id="stat-jarak">—</div>
+                    </div>
+                </div>
+                <div class="divider"></div>
+                <div class="route-stat">
+                    <div class="route-stat-icon">⏱</div>
+                    <div>
+                        <div class="route-stat-label">Estimasi Waktu</div>
+                        <div class="route-stat-value" id="stat-waktu">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Koridor Filter -->
+            <div>
+                <div class="section-label">Koridor Aktif</div>
+                <div class="koridor-filter" id="koridor-filter"></div>
+            </div>
+
+        </div>
+
+        <!-- Legend -->
+        <div class="legend">
+            <div class="legend-title">Keterangan</div>
+            <div class="legend-items" id="legend-items"></div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+
+    // ── DATA KORIDOR ──────────────────────────────────────────────
+    const koridorData = [
+        {
+            id: 1, nama: "Baleendah – BEC (via Bojongsoang)", warna: "#EF4444",
+            halte: [
+                { nama: "Baleendah", lat: -7.063889, lng: 107.633333 },
+                { nama: "Masjid Al-Amanah", lat: -7.055556, lng: 107.620833 },
+                { nama: "Matahari Land", lat: -7.050000, lng: 107.615000 },
+                { nama: "Masjid Jami Baitul Huda", lat: -7.045000, lng: 107.610000 },
+                { nama: "Bubur Ayam Haji Amid", lat: -7.040000, lng: 107.605000 },
+                { nama: "Borma Bojongsoang", lat: -7.0250, lng: 107.6350 },
+                { nama: "SD Negeri Lengkong", lat: -7.020000, lng: 107.630000 },
+                { nama: "Puskesmas Bojongsoang", lat: -7.015000, lng: 107.625000 },
+                { nama: "Bluebird Bojongsoang", lat: -7.010000, lng: 107.620000 },
+                { nama: "Pasar Kordon", lat: -6.995000, lng: 107.610000 },
+                { nama: "Taman Tegallega", lat: -6.920833, lng: 107.619444 },
+                { nama: "ITC Kebon Kelapa", lat: -6.915000, lng: 107.615000 },
+                { nama: "Alun-alun Bandung", lat: -6.921389, lng: 107.606944 },
+                { nama: "Stasiun Bandung", lat: -6.914744, lng: 107.609810 },
+                { nama: "BEC (Bandung Electronic Center)", lat: -6.905833, lng: 107.605000 },
+            ]
+        },
+        {
+            id: 2, nama: "BEC – Baleendah (via Bojongsoang)", warna: "#3B82F6",
+            halte: [
+                { nama: "BEC (Bandung Electronic Center)", lat: -6.905833, lng: 107.605000 },
+                { nama: "Museum Kota Bandung", lat: -6.907000, lng: 107.606000 },
+                { nama: "Alun-alun Bandung", lat: -6.921389, lng: 107.606944 },
+                { nama: "Lapangan Tegallega", lat: -6.920833, lng: 107.619444 },
+                { nama: "Pasar Kordon B", lat: -6.995000, lng: 107.610000 },
+                { nama: "Bluebird B", lat: -7.010000, lng: 107.620000 },
+                { nama: "Transmart Buah Batu", lat: -7.014000, lng: 107.624000 },
+                { nama: "Borma Bojongsoang", lat: -7.0250, lng: 107.6350 },
+                { nama: "Masjid Jami Baitul Huda B", lat: -7.045000, lng: 107.610000 },
+                { nama: "RS Al Ihsan", lat: -7.055000, lng: 107.618000 },
+                { nama: "Baleendah", lat: -7.063889, lng: 107.633333 },
+            ]
+        },
+        {
+            id: 3, nama: "Leuwipanjang – Majalaya (via Bojongsoang)", warna: "#10B981",
+            halte: [
+                { nama: "Terminal Leuwipanjang", lat: -6.973056, lng: 107.575278 },
+                { nama: "RS Immanuel", lat: -6.968000, lng: 107.580000 },
+                { nama: "PT INTI", lat: -6.928000, lng: 107.615000 },
+                { nama: "Zipur Dayeuhkolot", lat: -7.000000, lng: 107.625000 },
+                { nama: "Pasar Baleendah", lat: -7.063889, lng: 107.633333 },
+                { nama: "Area Bojongsoang Selatan", lat: -7.035000, lng: 107.638000 },
+                { nama: "Terminal Ciparay", lat: -7.110000, lng: 107.650000 },
+                { nama: "Terminal Majalaya", lat: -7.130000, lng: 107.660000 },
+            ]
+        },
+        {
+            id: 4, nama: "Buahbatu – Dayeuhkolot (via Bojongsoang)", warna: "#F59E0B",
+            halte: [
+                { nama: "Buah Batu", lat: -6.985000, lng: 107.600000 },
+                { nama: "Jalan Terusan Buah Batu", lat: -6.995000, lng: 107.608000 },
+                { nama: "Simpang Bojongsoang", lat: -7.020000, lng: 107.630000 },
+                { nama: "Jalan Raya Bojongsoang", lat: -7.0250, lng: 107.6350 },
+                { nama: "Sukabirus", lat: -7.030000, lng: 107.638000 },
+                { nama: "Telkom University", lat: -7.015000, lng: 107.625000 },
+                { nama: "Dayeuhkolot", lat: -7.050000, lng: 107.650000 },
+            ]
+        },
+        {
+            id: 5, nama: "Ciparay – Tegallega (via Bojongsoang)", warna: "#8B5CF6",
+            halte: [
+                { nama: "Terminal Ciparay", lat: -7.110000, lng: 107.650000 },
+                { nama: "Baleendah", lat: -7.063889, lng: 107.633333 },
+                { nama: "Simpang Bojongsoang", lat: -7.020000, lng: 107.630000 },
+                { nama: "Jalan Bojongsoang", lat: -7.0250, lng: 107.6350 },
+                { nama: "Buah Batu", lat: -6.985000, lng: 107.600000 },
+                { nama: "Soekarno Hatta", lat: -6.940000, lng: 107.615000 },
+                { nama: "Taman Tegallega", lat: -6.920833, lng: 107.619444 },
+            ]
+        },
+        {
+            id: 6, nama: "Majalaya – Kalapa (via Bojongsoang)", warna: "#EC4899",
+            halte: [
+                { nama: "Terminal Majalaya", lat: -7.130000, lng: 107.660000 },
+                { nama: "Ibun", lat: -7.100000, lng: 107.655000 },
+                { nama: "Baleendah", lat: -7.063889, lng: 107.633333 },
+                { nama: "Griya Bandung Asri", lat: -7.025000, lng: 107.633000 },
+                { nama: "Borma Bojongsoang", lat: -7.0250, lng: 107.6350 },
+                { nama: "Pasar Kordon", lat: -6.995000, lng: 107.610000 },
+                { nama: "Buah Batu", lat: -6.985000, lng: 107.600000 },
+                { nama: "Kebon Kelapa", lat: -6.915000, lng: 107.615000 },
+            ]
+        },
+    ];
+
+    // ── INISIALISASI PETA ─────────────────────────────────────────
+    const map = L.map('map').setView([-7.0250, 107.6350], 13);
+    let routingControl = null;
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    // ── GAMBAR SEMUA KORIDOR ──────────────────────────────────────
+    koridorData.forEach(koridor => {
+        const path = koridor.halte.map(h => [h.lat, h.lng]);
+        L.polyline(path, {
+            color: koridor.warna,
+            weight: 4,
+            opacity: 0.75
+        }).addTo(map).bindPopup(`<b style="color:${koridor.warna}">${koridor.nama}</b>`);
+
+        koridor.halte.forEach(halte => {
+            const icon = L.divIcon({
+                className: '',
+                html: `<div style="width:10px;height:10px;background:${koridor.warna};border:2px solid white;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,0.4)"></div>`,
+                iconSize: [10, 10], iconAnchor: [5, 5]
+            });
+            L.marker([halte.lat, halte.lng], { icon })
+                .addTo(map)
+                .bindPopup(`
+                    <div style="font-family:'Plus Jakarta Sans',sans-serif;padding:4px;">
+                        <b style="font-size:13px;">${halte.nama}</b><br>
+                        <span style="color:${koridor.warna};font-size:11px;font-weight:600;">🚌 ${koridor.nama}</span>
+                    </div>
+                `);
+        });
+    });
+
+    // ── GABUNGKAN SEMUA HALTE (deduplikasi nama) ──────────────────
+    const seenNames = new Set();
+    const allHalte = [];
+
+    koridorData.forEach(koridor => {
+        koridor.halte.forEach(halte => {
+            if (!seenNames.has(halte.nama)) {
+                seenNames.add(halte.nama);
+                allHalte.push({ nama: halte.nama, lat: halte.lat, lng: halte.lng });
+            }
+        });
+    });
+
+    allHalte.sort((a, b) => a.nama.localeCompare(b.nama));
+
+    // ── ISI DROPDOWN ──────────────────────────────────────────────
+    const startSelect = document.getElementById('start-halte');
+    const endSelect = document.getElementById('end-halte');
+
+    allHalte.forEach((halte, i) => {
+        [startSelect, endSelect].forEach(sel => {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = halte.nama;
+            sel.appendChild(opt);
+        });
+    });
+
+    endSelect.selectedIndex = Math.min(1, allHalte.length - 1);
+
+    // ── LEGEND & FILTER ───────────────────────────────────────────
+    const legendItems = document.getElementById('legend-items');
+    const koridorFilter = document.getElementById('koridor-filter');
+
+    koridorData.forEach(koridor => {
+        // Legend
+        const li = document.createElement('div');
+        li.className = 'legend-item';
+        li.innerHTML = `
+            <div class="legend-line" style="background:${koridor.warna}"></div>
+            <span>K${koridor.id} — ${koridor.nama.split('(')[0].trim()}</span>
+        `;
+        legendItems.appendChild(li);
+
+        // Filter chip
+        const chip = document.createElement('div');
+        chip.className = 'koridor-chip';
+        chip.innerHTML = `
+            <div class="dot" style="background:${koridor.warna}"></div>
+            <span>Koridor ${koridor.id} — ${koridor.nama.split('(')[0].trim()}</span>
+        `;
+        chip.addEventListener('click', () => {
+            const bounds = L.latLngBounds(koridor.halte.map(h => [h.lat, h.lng]));
+            map.fitBounds(bounds, { padding: [40, 40] });
+        });
+        koridorFilter.appendChild(chip);
+    });
+
+    // ── CARI RUTE ─────────────────────────────────────────────────
+    document.getElementById('cari-rute').addEventListener('click', function () {
+        const si = parseInt(startSelect.value);
+        const ei = parseInt(endSelect.value);
+
+        if (si === ei) {
+            alert('Halte awal dan tujuan tidak boleh sama!');
+            return;
+        }
+
+        const start = allHalte[si];
+        const end = allHalte[ei];
+
+        if (routingControl) {
+            map.removeControl(routingControl);
+            routingControl = null;
+        }
+
+        routingControl = L.Routing.control({
+            waypoints: [
+                L.latLng(start.lat, start.lng),
+                L.latLng(end.lat, end.lng)
+            ],
+            show: false,
+            addWaypoints: false,
+            routeWhileDragging: false,
+            lineOptions: {
+                styles: [{ color: '#4ade80', weight: 5, opacity: 0.9 }]
+            },
+            createMarker: function (i, wp) {
+                const isStart = i === 0;
+                const icon = L.divIcon({
+                    className: '',
+                    html: `<div style="width:22px;height:22px;background:${isStart ? '#4ade80' : '#ef4444'};border:3px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:11px;box-shadow:0 3px 8px rgba(0,0,0,0.4)">${isStart ? 'A' : 'B'}</div>`,
+                    iconSize: [22, 22], iconAnchor: [11, 11]
+                });
+                return L.marker(wp.latLng, { icon });
+            }
+        })
+        .on('routesfound', function (e) {
+            const summary = e.routes[0].summary;
+            const jarak = (summary.totalDistance / 1000).toFixed(2);
+            const waktu = Math.round(summary.totalTime / 60);
+
+            document.getElementById('stat-jarak').textContent = jarak + ' km';
+            document.getElementById('stat-waktu').textContent = waktu + ' menit';
+            document.getElementById('route-summary').classList.add('visible');
+        })
+        .addTo(map);
+    });
+
+}); // end DOMContentLoaded
+</script>
+
+</body>
+</html>
