@@ -11,7 +11,9 @@ import {
   Sparkles,
   User,
   Bot,
-  RotateCcw
+  RotateCcw,
+  Navigation,
+  Loader2
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -24,6 +26,11 @@ interface Message {
   quickReplies?: string[];
 }
 
+interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
 interface TouristSpot {
   name: string;
   category: 'wisata' | 'kuliner' | 'transport';
@@ -32,6 +39,14 @@ interface TouristSpot {
   priceRange?: string;
   mustTry?: string[];
   bestTime?: string;
+  coordinates?: Coordinates;
+  distance?: number;
+}
+
+interface UserLocation {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
 }
 
 const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
@@ -42,7 +57,8 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
       description: "Taman edukasi lalu lintas yang cocok untuk keluarga dengan berbagai wahana permainan.",
       location: "Jl. Belitung No.1, Merdeka",
       priceRange: "Rp 10.000 - Rp 15.000",
-      bestTime: "Weekend pagi"
+      bestTime: "Weekend pagi",
+      coordinates: { lat: -6.9147, lng: 107.6098 }
     },
     {
       name: "Museum Konperensi Asia Afrika",
@@ -50,7 +66,8 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
       description: "Museum bersejarah yang menyimpan memorabilia Konferensi Asia Afrika 1955.",
       location: "Jl. Asia Afrika No.65",
       priceRange: "Rp 10.000",
-      bestTime: "Selasa-Minggu 08.00-16.00"
+      bestTime: "Selasa-Minggu 08.00-16.00",
+      coordinates: { lat: -6.9211, lng: 107.6191 }
     },
     {
       name: "Kawah Putih Ciwidey",
@@ -58,7 +75,8 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
       description: "Danau kawah vulkanik dengan air berwarna putih kehijauan yang memukau.",
       location: "Ciwidey, ±30km dari Bojongsoang",
       priceRange: "Rp 30.000 - Rp 50.000",
-      bestTime: "Pagi hari untuk kabut terbaik"
+      bestTime: "Pagi hari untuk kabut terbaik",
+      coordinates: { lat: -7.1661, lng: 107.4023 }
     },
     {
       name: "Trans Studio Bandung",
@@ -66,7 +84,8 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
       description: "Theme park indoor terbesar dengan berbagai wahana seru.",
       location: "Jl. Gatot Subroto No.289",
       priceRange: "Rp 200.000 - Rp 300.000",
-      bestTime: "Weekday untuk antrian lebih singkat"
+      bestTime: "Weekday untuk antrian lebih singkat",
+      coordinates: { lat: -6.9297, lng: 107.6372 }
     }
   ],
   kuliner: [
@@ -76,7 +95,8 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
       description: "Batagor legendaris Bandung dengan bumbu kacang yang khas.",
       location: "Jl. Veteran No.25",
       priceRange: "Rp 15.000 - Rp 30.000",
-      mustTry: ["Batagor goreng", "Siomay", "Es teler"]
+      mustTry: ["Batagor goreng", "Siomay", "Es teler"],
+      coordinates: { lat: -6.9175, lng: 107.6191 }
     },
     {
       name: "Mie Kocok Kebon Jukut",
@@ -84,7 +104,8 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
       description: "Mie kocok dengan kuah kaldu sapi yang gurih dan kikil empuk.",
       location: "Jl. Kebon Jukut No.5",
       priceRange: "Rp 20.000 - Rp 35.000",
-      mustTry: ["Mie kocok spesial", "Mie yamin"]
+      mustTry: ["Mie kocok spesial", "Mie yamin"],
+      coordinates: { lat: -6.9147, lng: 107.6098 }
     },
     {
       name: "Sate Hadori",
@@ -92,7 +113,8 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
       description: "Sate ayam dengan bumbu kacang khas Sunda yang manis-gurih.",
       location: "Jl. Cibaduyut",
       priceRange: "Rp 25.000 - Rp 50.000",
-      mustTry: ["Sate ayam", "Sate kambing", "Lontong"]
+      mustTry: ["Sate ayam", "Sate kambing", "Lontong"],
+      coordinates: { lat: -6.9708, lng: 107.6314 }
     },
     {
       name: "Kopi Toko Djawa",
@@ -100,7 +122,8 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
       description: "Kedai kopi vintage dengan suasana kolonial yang cozy.",
       location: "Braga",
       priceRange: "Rp 20.000 - Rp 40.000",
-      mustTry: ["Kopi tubruk", "Roti bakar", "Pisang goreng"]
+      mustTry: ["Kopi tubruk", "Roti bakar", "Pisang goreng"],
+      coordinates: { lat: -6.9175, lng: 107.6089 }
     },
     {
       name: "Warung Nasi Ampera",
@@ -108,7 +131,8 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
       description: "Rumah makan Sunda dengan lauk pauk lengkap dan sambal terasi.",
       location: "Jl. Sunda No.2",
       priceRange: "Rp 30.000 - Rp 60.000",
-      mustTry: ["Ayam goreng", "Ikan asin", "Sayur asem", "Sambal terasi"]
+      mustTry: ["Ayam goreng", "Ikan asin", "Sayur asem", "Sambal terasi"],
+      coordinates: { lat: -6.9147, lng: 107.6145 }
     }
   ],
   transport: [
@@ -139,10 +163,11 @@ const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
 const WELCOME_MESSAGE = `Halo! 👋 Saya **BojongBot**, asisten virtual wisata & kuliner Anda di Bojongsoang dan sekitarnya! 
 
 Saya bisa membantu Anda dengan:
-• 🗺️ **Rekomendasi wisata** terbaik di Bandung
-• 🍜 **Spot kuliner** hits & legendaris
-• 🚌 **Info transportasi** & koridor Trans Metro Bandung
-• 💡 **Tips perjalanan** lokal
+- 🗺️ **Rekomendasi wisata** terbaik di Bandung
+- 🍜 **Spot kuliner** hits & legendaris
+- 🚌 **Info transportasi** & koridor Trans Metro Bandung
+- 📍 **Rekomendasi terdekat** dari lokasi Anda
+- 💡 **Tips perjalanan** lokal
 
 Ada yang bisa saya bantu hari ini? 😊`;
 
@@ -151,16 +176,18 @@ const ChatBot = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [isLoadingLocation, setIsLoadingLocation] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (messages.length === 0) {
       addBotMessage(WELCOME_MESSAGE, [
+        "📍 Aktifkan Lokasi Saya",
         "Wisata terbaik di Bandung",
         "Kuliner legendaris",
-        "Info koridor Trans Metro",
-        "Tips hemat berwisata"
+        "Info koridor BojongTravel"
       ]);
     }
   }, []);
@@ -171,6 +198,99 @@ const ChatBot = () => {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // Calculate distance using Haversine formula
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Radius bumi dalam km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
+  // Get user's current location
+  const getUserLocation = () => {
+    setIsLoadingLocation(true);
+    
+    if (!navigator.geolocation) {
+      toast.error("Geolocation tidak didukung di browser Anda");
+      setIsLoadingLocation(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const location: UserLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy
+        };
+        setUserLocation(location);
+        setIsLoadingLocation(false);
+        toast.success("Lokasi berhasil diaktifkan! 📍");
+        
+        addBotMessage(
+          `✅ Lokasi Anda berhasil terdeteksi!\n\nSekarang saya bisa memberikan rekomendasi terdekat dari posisi Anda. Mau cari apa?`,
+          ["Wisata terdekat", "Kuliner terdekat", "Semua lokasi terdekat"]
+        );
+      },
+      (error) => {
+        setIsLoadingLocation(false);
+        let errorMessage = "Gagal mendapatkan lokasi";
+        
+        switch(error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = "Izin akses lokasi ditolak. Mohon aktifkan izin lokasi di browser Anda.";
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = "Informasi lokasi tidak tersedia.";
+            break;
+          case error.TIMEOUT:
+            errorMessage = "Permintaan lokasi timeout.";
+            break;
+        }
+        
+        toast.error(errorMessage);
+        addBotMessage(
+          `❌ ${errorMessage}\n\nAnda tetap bisa menggunakan layanan saya tanpa fitur lokasi.`,
+          ["Wisata terbaik", "Kuliner enak", "Info transportasi"]
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+  };
+
+  // Sort spots by distance
+  const getSortedByDistance = (spots: TouristSpot[]): TouristSpot[] => {
+    if (!userLocation) return spots;
+
+    return spots
+      .filter(spot => spot.coordinates)
+      .map(spot => ({
+        ...spot,
+        distance: calculateDistance(
+          userLocation.latitude,
+          userLocation.longitude,
+          spot.coordinates!.lat,
+          spot.coordinates!.lng
+        )
+      }))
+      .sort((a, b) => (a.distance || 0) - (b.distance || 0));
+  };
+
+  // Generate Google Maps link
+  const getDirectionsLink = (spot: TouristSpot): string => {
+    if (!spot.coordinates) return "";
+    return `https://www.google.com/maps/dir/?api=1&destination=${spot.coordinates.lat},${spot.coordinates.lng}`;
   };
 
   const addBotMessage = (content: string, quickReplies?: string[], delay = 1000) => {
@@ -208,37 +328,110 @@ const ChatBot = () => {
     let response = "";
     let quickReplies: string[] = [];
 
-    if (query.includes('halo') || query.includes('hi') || query.includes('hey')) {
+    // Check for location activation request
+    if (query.includes('aktifkan lokasi') || query.includes('lokasi saya') || query.includes('gps')) {
+      getUserLocation();
+      return;
+    }
+
+    // Check for nearby requests
+    if ((query.includes('terdekat') || query.includes('dekat') || query.includes('nearby')) && userLocation) {
+      if (query.includes('wisata')) {
+        const spots = getSortedByDistance(LOCAL_KNOWLEDGE.wisata);
+        response = `**Wisata Terdekat dari Lokasi Anda:**\n\n`;
+        spots.slice(0, 3).forEach((spot, idx) => {
+          response += `${idx + 1}. **${spot.name}** 📍 ${spot.distance?.toFixed(1)} km\n`;
+          response += `   ${spot.location}\n`;
+          response += `   💰 ${spot.priceRange}\n`;
+          response += `   ⏰ ${spot.bestTime}\n`;
+          response += `   🗺️ [Petunjuk Arah](${getDirectionsLink(spot)})\n\n`;
+        });
+        quickReplies = ["Kuliner terdekat", "Semua wisata", "Info transportasi"];
+      } else if (query.includes('kuliner') || query.includes('makan')) {
+        const spots = getSortedByDistance(LOCAL_KNOWLEDGE.kuliner);
+        response = `**Kuliner Terdekat dari Lokasi Anda:**\n\n`;
+        spots.slice(0, 3).forEach((spot, idx) => {
+          response += `${idx + 1}. **${spot.name}** 🍽️ ${spot.distance?.toFixed(1)} km\n`;
+          response += `   ${spot.location}\n`;
+          response += `   💰 ${spot.priceRange}\n`;
+          if (spot.mustTry) {
+            response += `   ⭐ ${spot.mustTry.join(", ")}\n`;
+          }
+          response += `   🗺️ [Petunjuk Arah](${getDirectionsLink(spot)})\n\n`;
+        });
+        quickReplies = ["Wisata terdekat", "Semua kuliner", "Tips hemat"];
+      } else {
+        // All nearby locations
+        const allSpots = [
+          ...getSortedByDistance(LOCAL_KNOWLEDGE.wisata),
+          ...getSortedByDistance(LOCAL_KNOWLEDGE.kuliner)
+        ].sort((a, b) => (a.distance || 0) - (b.distance || 0));
+        
+        response = `**Semua Lokasi Terdekat dari Anda:**\n\n`;
+        allSpots.slice(0, 5).forEach((spot, idx) => {
+          const icon = spot.category === 'wisata' ? '🗺️' : '🍽️';
+          response += `${idx + 1}. ${icon} **${spot.name}** - ${spot.distance?.toFixed(1)} km\n`;
+          response += `   ${spot.location}\n`;
+          response += `   💰 ${spot.priceRange}\n`;
+          response += `   🗺️ [Petunjuk Arah](${getDirectionsLink(spot)})\n\n`;
+        });
+        quickReplies = ["Wisata terdekat", "Kuliner terdekat", "Filter budget"];
+      }
+    }
+    // General queries without location
+    else if (query.includes('halo') || query.includes('hi') || query.includes('hey')) {
       response = "Halo! Senang bertemu dengan Anda! 🌟 Mau explore wisata atau cari makanan enak hari ini?";
-      quickReplies = ["Wisata alam", "Kuliner malam", "Museum", "Kafe hits"];
+      quickReplies = userLocation 
+        ? ["Wisata terdekat", "Kuliner terdekat", "Museum", "Kafe hits"]
+        : ["📍 Aktifkan Lokasi", "Wisata alam", "Kuliner malam", "Museum"];
     }
     else if (query.includes('wisata') || query.includes('tempat') || query.includes('liburan') || query.includes('jalan-jalan')) {
-      const spots = LOCAL_KNOWLEDGE.wisata;
+      const spots = userLocation ? getSortedByDistance(LOCAL_KNOWLEDGE.wisata) : LOCAL_KNOWLEDGE.wisata;
       response = `**Rekomendasi Wisata Terbaik:**\n\n`;
       spots.forEach((spot, idx) => {
         response += `${idx + 1}. **${spot.name}**\n`;
-        response += `📍 ${spot.location}\n`;
+        if (spot.distance) {
+          response += `📍 ${spot.location} (${spot.distance.toFixed(1)} km dari Anda)\n`;
+        } else {
+          response += `📍 ${spot.location}\n`;
+        }
         response += `💰 ${spot.priceRange}\n`;
         response += `⏰ ${spot.bestTime}\n`;
-        response += `📝 ${spot.description}\n\n`;
+        response += `📝 ${spot.description}\n`;
+        if (spot.coordinates && userLocation) {
+          response += `🗺️ [Petunjuk Arah](${getDirectionsLink(spot)})\n`;
+        }
+        response += `\n`;
       });
       response += `💡 *Tips: Pagi hari adalah waktu terbaik untuk mengunjungi wisata alam!*`;
-      quickReplies = ["Kuliner terdekat", "Transportasi ke sana", "Tips hemat", "Wisata gratis"];
+      quickReplies = userLocation 
+        ? ["Kuliner terdekat", "Transportasi", "Wisata gratis"]
+        : ["📍 Aktifkan Lokasi", "Kuliner enak", "Transportasi"];
     }
     else if (query.includes('makan') || query.includes('kuliner') || query.includes('restoran') || query.includes('warung') || query.includes('cafe') || query.includes('kopi')) {
-      const foods = LOCAL_KNOWLEDGE.kuliner;
+      const foods = userLocation ? getSortedByDistance(LOCAL_KNOWLEDGE.kuliner) : LOCAL_KNOWLEDGE.kuliner;
       response = `**Rekomendasi Kuliner Bojongsoang & Bandung:**\n\n`;
       foods.forEach((food, idx) => {
         response += `${idx + 1}. **${food.name}** ${food.category === 'kuliner' ? '🍽️' : '☕'}\n`;
-        response += `📍 ${food.location}\n`;
+        if (food.distance) {
+          response += `📍 ${food.location} (${food.distance.toFixed(1)} km dari Anda)\n`;
+        } else {
+          response += `📍 ${food.location}\n`;
+        }
         response += `💰 ${food.priceRange}\n`;
         if (food.mustTry) {
           response += `⭐ Wajib coba: ${food.mustTry.join(", ")}\n`;
         }
-        response += `📝 ${food.description}\n\n`;
+        response += `📝 ${food.description}\n`;
+        if (food.coordinates && userLocation) {
+          response += `🗺️ [Petunjuk Arah](${getDirectionsLink(food)})\n`;
+        }
+        response += `\n`;
       });
       response += `🤤 *Jangan lupa bawa uang cash ya, beberapa tempat belum menerima QRIS!*`;
-      quickReplies = ["Wisata terdekat", "Cafe cozy", "Makanan pedas", "Budget mahasiswa"];
+      quickReplies = userLocation 
+        ? ["Wisata terdekat", "Cafe cozy", "Budget mahasiswa"]
+        : ["📍 Aktifkan Lokasi", "Wisata terdekat", "Cafe cozy"];
     }
     else if (query.includes('transport') || query.includes('bus') || query.includes('koridor') || query.includes('trans metro') || query.includes('angkot')) {
       const trans = LOCAL_KNOWLEDGE.transport;
@@ -261,13 +454,20 @@ const ChatBot = () => {
       response += `✨ *Dengan budget Rp 200.000/hari, Anda sudah bisa menikmati Bandung dengan puas!*`;
       quickReplies = ["Itinerary 1 hari", "Hotel murah", "Wisata gratis", "Kuliner hemat"];
     }
+    else if (query.includes('tutup') || query.includes('close') || query.includes('exit') || query.includes('selesai')) {
+      response = "Terima kasih sudah menggunakan BojongBot! 😊\n\nSemoga perjalanan Anda menyenangkan. Sampai jumpa lagi! 👋";
+      quickReplies = [];
+      setTimeout(() => setIsOpen(false), 2000);
+    }
     else if (query.includes('terima kasih') || query.includes('thanks') || query.includes('makasih')) {
       response = "Sama-sama! 😊 Senang bisa membantu. Jangan lupa share pengalaman wisata Anda ya! \n\nJika butuh bantuan lagi, saya siap 24/7! 🚀";
       quickReplies = ["Tutup chat", "Kembali ke menu"];
     }
     else {
-      response = `Maaf, saya belum paham maksud Anda. 🤔\n\nCoba ketik salah satu dari berikut:\n• "Wisata terbaik"\n• "Kuliner legendaris"\n• "Info transportasi"\n• "Tips hemat"\n\nAtau pilih menu cepat di bawah! 👇`;
-      quickReplies = ["Wisata", "Kuliner", "Transportasi", "Tips"];
+      response = `Maaf, saya belum paham maksud Anda. 🤔\n\nCoba ketik salah satu dari berikut:\n• "Wisata terbaik"\n• "Kuliner legendaris"\n• "Info transportasi"\n• "Tips hemat"${!userLocation ? '\n• "Aktifkan lokasi"' : '\n• "Wisata terdekat"'}\n\nAtau pilih menu cepat di bawah! 👇`;
+      quickReplies = userLocation 
+        ? ["Wisata terdekat", "Kuliner terdekat", "Transportasi", "Tips"]
+        : ["📍 Aktifkan Lokasi", "Wisata", "Kuliner", "Transportasi"];
     }
 
     addBotMessage(response, quickReplies);
@@ -279,13 +479,22 @@ const ChatBot = () => {
 
   const handleReset = () => {
     setMessages([]);
+    setUserLocation(null);
     addBotMessage(WELCOME_MESSAGE, [
+      "📍 Aktifkan Lokasi Saya",
       "Wisata terbaik di Bandung",
       "Kuliner legendaris",
-      "Info koridor Trans Metro",
-      "Tips hemat berwisata"
+      "Info koridor Trans Metro"
     ], 500);
     toast.success("Percakapan direset");
+  };
+
+  const handleClose = () => {
+    if (isTyping) {
+      toast.info("Tunggu bot selesai mengetik...");
+      return;
+    }
+    setIsOpen(false);
   };
 
   const formatTime = (date: Date) => {
@@ -345,23 +554,40 @@ const ChatBot = () => {
                       BojongBot 
                       <Sparkles className="h-4 w-4 text-yellow-300" />
                     </h3>
-                    <p className="text-xs text-white/80">Local Guide Expert</p>
+                    <p className="text-xs text-white/80 flex items-center gap-1">
+                      {userLocation ? (
+                        <>
+                          <Navigation className="h-3 w-3" />
+                          GPS Aktif
+                        </>
+                      ) : (
+                        'Local Guide Expert'
+                      )}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
+                  {userLocation && (
+                    <div className="flex items-center gap-1 bg-white/20 px-2 py-1 rounded-full mr-1">
+                      <MapPin className="h-3 w-3 text-white" />
+                      <span className="text-[10px] text-white">ON</span>
+                    </div>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={handleReset}
                     className="h-8 w-8 text-white/80 hover:text-white hover:bg-white/20"
+                    title="Reset percakapan"
                   >
                     <RotateCcw className="h-4 w-4" />
                   </Button>
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => setIsOpen(false)}
+                    onClick={handleClose}
                     className="h-8 w-8 text-white/80 hover:text-white hover:bg-white/20"
+                    title="Tutup chatbot"
                   >
                     <X className="h-5 w-5" />
                   </Button>
@@ -471,9 +697,10 @@ const ChatBot = () => {
                     ref={inputRef}
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
                     placeholder="Ketik pertanyaan Anda..."
                     className="flex-1 rounded-full border-primary/20 focus-visible:ring-primary"
+                    disabled={isTyping}
                   />
                   <Button
                     onClick={() => handleSend()}
@@ -486,15 +713,29 @@ const ChatBot = () => {
                 
                 {/* Quick Action Chips */}
                 <div className="flex gap-2 mt-3 overflow-x-auto pb-1 scrollbar-hide">
+                  {!userLocation && (
+                    <button
+                      onClick={() => getUserLocation()}
+                      disabled={isLoadingLocation}
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-green-500/10 text-green-600 hover:bg-green-500/20 transition-colors whitespace-nowrap border border-green-500/20 disabled:opacity-50"
+                    >
+                      {isLoadingLocation ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Navigation className="h-3 w-3" />
+                      )}
+                      {isLoadingLocation ? 'Mencari...' : 'Aktifkan GPS'}
+                    </button>
+                  )}
                   <button
-                    onClick={() => handleQuickReply("Wisata terdekat")}
+                    onClick={() => handleQuickReply(userLocation ? "Wisata terdekat" : "Wisata terbaik")}
                     className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-muted hover:bg-muted/80 transition-colors whitespace-nowrap"
                   >
                     <MapPin className="h-3 w-3" />
                     Wisata
                   </button>
                   <button
-                    onClick={() => handleQuickReply("Kuliner enak")}
+                    onClick={() => handleQuickReply(userLocation ? "Kuliner terdekat" : "Kuliner enak")}
                     className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-muted hover:bg-muted/80 transition-colors whitespace-nowrap"
                   >
                     <Utensils className="h-3 w-3" />
