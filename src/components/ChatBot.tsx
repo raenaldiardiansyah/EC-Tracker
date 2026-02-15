@@ -49,6 +49,11 @@ interface UserLocation {
   accuracy: number;
 }
 
+// ✅ TAMBAHAN: Interface untuk props
+interface ChatBotProps {
+  onOpenChange?: (isOpen: boolean) => void;
+}
+
 const LOCAL_KNOWLEDGE: Record<string, TouristSpot[]> = {
   wisata: [
     {
@@ -171,7 +176,8 @@ Saya bisa membantu Anda dengan:
 
 Ada yang bisa saya bantu hari ini? 😊`;
 
-const ChatBot = () => {
+// ✅ TAMBAHAN: Terima prop onOpenChange
+const ChatBot = ({ onOpenChange }: ChatBotProps = {}) => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -180,6 +186,12 @@ const ChatBot = () => {
   const [isLoadingLocation, setIsLoadingLocation] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // ✅ TAMBAHAN: Helper function untuk update isOpen dan notify parent
+  const handleSetIsOpen = (value: boolean) => {
+    setIsOpen(value);
+    onOpenChange?.(value);
+  };
 
   useEffect(() => {
     if (messages.length === 0) {
@@ -200,9 +212,8 @@ const ChatBot = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Calculate distance using Haversine formula
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371; // Radius bumi dalam km
+    const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = 
@@ -213,7 +224,6 @@ const ChatBot = () => {
     return R * c;
   };
 
-  // Get user's current location
   const getUserLocation = () => {
     setIsLoadingLocation(true);
     
@@ -269,7 +279,6 @@ const ChatBot = () => {
     );
   };
 
-  // Sort spots by distance
   const getSortedByDistance = (spots: TouristSpot[]): TouristSpot[] => {
     if (!userLocation) return spots;
 
@@ -287,7 +296,6 @@ const ChatBot = () => {
       .sort((a, b) => (a.distance || 0) - (b.distance || 0));
   };
 
-  // Generate Google Maps link
   const getDirectionsLink = (spot: TouristSpot): string => {
     if (!spot.coordinates) return "";
     return `https://www.google.com/maps/dir/?api=1&destination=${spot.coordinates.lat},${spot.coordinates.lng}`;
@@ -328,13 +336,11 @@ const ChatBot = () => {
     let response = "";
     let quickReplies: string[] = [];
 
-    // Check for location activation request
     if (query.includes('aktifkan lokasi') || query.includes('lokasi saya') || query.includes('gps')) {
       getUserLocation();
       return;
     }
 
-    // Check for nearby requests
     if ((query.includes('terdekat') || query.includes('dekat') || query.includes('nearby')) && userLocation) {
       if (query.includes('wisata')) {
         const spots = getSortedByDistance(LOCAL_KNOWLEDGE.wisata);
@@ -361,7 +367,6 @@ const ChatBot = () => {
         });
         quickReplies = ["Wisata terdekat", "Semua kuliner", "Tips hemat"];
       } else {
-        // All nearby locations
         const allSpots = [
           ...getSortedByDistance(LOCAL_KNOWLEDGE.wisata),
           ...getSortedByDistance(LOCAL_KNOWLEDGE.kuliner)
@@ -378,7 +383,6 @@ const ChatBot = () => {
         quickReplies = ["Wisata terdekat", "Kuliner terdekat", "Filter budget"];
       }
     }
-    // General queries without location
     else if (query.includes('halo') || query.includes('hi') || query.includes('hey')) {
       response = "Halo! Senang bertemu dengan Anda! 🌟 Mau explore wisata atau cari makanan enak hari ini?";
       quickReplies = userLocation 
@@ -457,7 +461,8 @@ const ChatBot = () => {
     else if (query.includes('tutup') || query.includes('close') || query.includes('exit') || query.includes('selesai')) {
       response = "Terima kasih sudah menggunakan BojongBot! 😊\n\nSemoga perjalanan Anda menyenangkan. Sampai jumpa lagi! 👋";
       quickReplies = [];
-      setTimeout(() => setIsOpen(false), 2000);
+      // ✅ GANTI: Gunakan handleSetIsOpen
+      setTimeout(() => handleSetIsOpen(false), 2000);
     }
     else if (query.includes('terima kasih') || query.includes('thanks') || query.includes('makasih')) {
       response = "Sama-sama! 😊 Senang bisa membantu. Jangan lupa share pengalaman wisata Anda ya! \n\nJika butuh bantuan lagi, saya siap 24/7! 🚀";
@@ -489,12 +494,13 @@ const ChatBot = () => {
     toast.success("Percakapan direset");
   };
 
+  // ✅ GANTI: Gunakan handleSetIsOpen
   const handleClose = () => {
     if (isTyping) {
       toast.info("Tunggu bot selesai mengetik...");
       return;
     }
-    setIsOpen(false);
+    handleSetIsOpen(false);
   };
 
   const formatTime = (date: Date) => {
@@ -513,10 +519,11 @@ const ChatBot = () => {
             initial={{ scale: 0, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0, opacity: 0 }}
-            className="fixed bottom-6 right-6 z-50"
+            className="fixed bottom-6 right-6 z-[1001]"
           >
             <Button
-              onClick={() => setIsOpen(true)}
+              // ✅ GANTI: Gunakan handleSetIsOpen
+              onClick={() => handleSetIsOpen(true)}
               className="h-14 w-14 rounded-full shadow-lg bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 transition-all duration-300 group"
             >
               <MessageCircle className="h-6 w-6 group-hover:scale-110 transition-transform" />
@@ -537,9 +544,10 @@ const ChatBot = () => {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.3 }}
-            className="fixed bottom-6 right-6 z-50 w-full max-w-md"
+            // ✅ UPDATE: Naikkan z-index dan tambah responsive classes
+            className="fixed inset-0 sm:bottom-6 sm:right-6 sm:inset-auto z-[1001] w-full sm:max-w-md"
           >
-            <div className="bg-card border border-border rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="bg-card border-0 sm:border border-border sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[80vh]">
               {/* Header */}
               <div className="bg-gradient-to-r from-primary to-primary/80 p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -595,7 +603,8 @@ const ChatBot = () => {
               </div>
 
               {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gradient-to-b from-background to-muted/30 min-h-[400px] max-h-[500px]">
+              {/* ✅ UPDATE: Responsive height */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gradient-to-b from-background to-muted/30 h-[calc(100vh-180px)] sm:h-auto sm:min-h-[400px] sm:max-h-[500px]">
                 {messages.map((message) => (
                   <motion.div
                     key={message.id}
@@ -603,7 +612,6 @@ const ChatBot = () => {
                     animate={{ opacity: 1, y: 0 }}
                     className={`flex gap-3 ${message.type === 'user' ? 'flex-row-reverse' : ''}`}
                   >
-                    {/* Avatar */}
                     <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${
                       message.type === 'user' 
                         ? 'bg-primary text-primary-foreground' 
@@ -616,7 +624,6 @@ const ChatBot = () => {
                       )}
                     </div>
 
-                    {/* Bubble */}
                     <div className={`max-w-[80%] space-y-2`}>
                       <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                         message.type === 'user'
@@ -630,14 +637,12 @@ const ChatBot = () => {
                         </div>
                       </div>
                       
-                      {/* Timestamp */}
                       <div className={`text-[10px] text-muted-foreground ${
                         message.type === 'user' ? 'text-right' : 'text-left'
                       }`}>
                         {formatTime(message.timestamp)}
                       </div>
 
-                      {/* Quick Replies */}
                       {message.quickReplies && message.quickReplies.length > 0 && (
                         <div className="flex flex-wrap gap-2 pt-2">
                           {message.quickReplies.map((reply, idx) => (
@@ -655,7 +660,6 @@ const ChatBot = () => {
                   </motion.div>
                 ))}
 
-                {/* Typing Indicator */}
                 {isTyping && (
                   <motion.div
                     initial={{ opacity: 0 }}
@@ -711,7 +715,6 @@ const ChatBot = () => {
                   </Button>
                 </div>
                 
-                {/* Quick Action Chips */}
                 <div className="flex gap-2 mt-3 overflow-x-auto pb-1 scrollbar-hide">
                   {!userLocation && (
                     <button

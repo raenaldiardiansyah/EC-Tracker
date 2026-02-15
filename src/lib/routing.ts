@@ -1,6 +1,5 @@
 /**
- * Routing utilities using OSRM (OpenStreetMap Routing Machine)
- * Free routing service that follows actual roads
+ * Routing utilities with rate limiting and error handling
  */
 
 export interface RouteCoordinate {
@@ -8,17 +7,42 @@ export interface RouteCoordinate {
   lng: number;
 }
 
-// OpenRouteService API key
-const ORS_API_KEY: string | undefined = import.meta.env?.VITE_ORS_API_KEY ?? "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImJkZTQ0MjFjMWIyNDQyYTI4NjA5MzBmZDg1MmRjZDI1IiwiaCI6Im11cm11cjY0In0=";
+const ORS_API_KEY: string | undefined =
+  import.meta.env?.VITE_ORS_API_KEY ??
+  "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImJkZTQ0MjFjMWIyNDQyYTI4NjA5MzBmZDg1MmRjZDI1IiwiaCI6Im11cm11cjY0In0=";
+
+// Cache for API responses
+const routeCache = new Map<string, RouteCoordinate[]>();
+const snapCache = new Map<string, RouteCoordinate>();
+
+// Rate limiting
+let lastApiCall = 0;
+const MIN_DELAY_MS = 200;
+
+async function waitForRateLimit() {
+  const now = Date.now();
+  const timeSinceLastCall = now - lastApiCall;
+  if (timeSinceLastCall < MIN_DELAY_MS) {
+    await new Promise(resolve => setTimeout(resolve, MIN_DELAY_MS - timeSinceLastCall));
+  }
+  lastApiCall = Date.now();
+}
 
 /**
- * Cari titik terdekat pada jalan besar (motorway/trunk/primary/secondary)
- * menggunakan Overpass API. Jika gagal, kembalikan titik asli.
+ * Snap point to major road with error handling and caching
  */
 export async function snapToMajorRoad(point: RouteCoordinate): Promise<RouteCoordinate> {
+  const cacheKey = `${point.lat.toFixed(6)},${point.lng.toFixed(6)}`;
+
+  if (snapCache.has(cacheKey)) {
+    return snapCache.get(cacheKey)!;
+  }
+
   try {
-    // Coba radius bertingkat agar tetap cepat namun robust (lebih agresif)
+    await waitForRateLimit();
+
     const radiuses = [300, 600, 1200];
+
     for (const radius of radiuses) {
       const query = `
         [out:json][timeout:10];
@@ -27,55 +51,80 @@ export async function snapToMajorRoad(point: RouteCoordinate): Promise<RouteCoor
         );
         out tags geom;`;
 
-      const resp = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ data: query }),
-      });
+      try {
+        const resp = await fetch("https://overpass-api.de/api/interpreter", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ data: query }),
+        });
 
-      const data = await resp.json();
-      const ways: Array<{ tags?: { highway?: string }; geometry: Array<{ lat: number; lon: number }> }> = data?.elements?.filter((el: { type: string }) => el.type === "way") || [];
+        if (!resp.ok) {
+          if (resp.status === 429) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            continue;
+          }
+          throw new Error(`HTTP ${resp.status}`);
+        }
 
-      if (ways.length === 0) continue;
+        const text = await resp.text();
+        let data;
 
-      // Bobot prioritas per kelas jalan (lebih kecil = lebih diprioritaskan)
-      const highwayWeight: Record<string, number> = {
-        motorway: 0.5,
-        trunk: 0.7,
-        primary: 1.0,
-        secondary: 1.3,
-      };
+        try {
+          data = JSON.parse(text);
+        } catch (jsonError) {
+          console.error('Invalid JSON from Overpass API:', text.substring(0, 100));
+          continue;
+        }
 
-      // Temukan titik proyeksi terbaik dengan skor (jarak^2 * bobot kelas)
-      let bestScore = Number.POSITIVE_INFINITY;
-      let bestPoint: RouteCoordinate | null = null;
+        const ways: Array<{
+          tags?: { highway?: string };
+          geometry: Array<{ lat: number; lon: number }>;
+        }> = data?.elements?.filter((el: { type: string }) => el.type === "way") || [];
 
-      for (const way of ways) {
-        const geom = way.geometry;
-        const cls = way.tags?.highway || "secondary";
-        const weight = highwayWeight[cls] ?? 1.5;
-        for (let i = 0; i < geom.length - 1; i++) {
-          const a = { lat: geom[i].lat, lng: geom[i].lon };
-          const b = { lat: geom[i + 1].lat, lng: geom[i + 1].lon };
-          const projected = projectPointOnSegment(point, a, b);
-          const d2 = squaredDistance(point, projected);
-          const score = d2 * weight;
-          if (score < bestScore) {
-            bestScore = score;
-            bestPoint = projected;
+        if (ways.length === 0) continue;
+
+        const highwayWeight: Record<string, number> = {
+          motorway: 0.5,
+          trunk: 0.7,
+          primary: 1.0,
+          secondary: 1.3,
+        };
+
+        let bestScore = Number.POSITIVE_INFINITY;
+        let bestPoint: RouteCoordinate | null = null;
+
+        for (const way of ways) {
+          const geom = way.geometry;
+          const cls = way.tags?.highway || "secondary";
+          const weight = highwayWeight[cls] ?? 1.5;
+
+          for (let i = 0; i < geom.length - 1; i++) {
+            const a = { lat: geom[i].lat, lng: geom[i].lon };
+            const b = { lat: geom[i + 1].lat, lng: geom[i + 1].lon };
+            const projected = projectPointOnSegment(point, a, b);
+            const d2 = squaredDistance(point, projected);
+            const score = d2 * weight;
+
+            if (score < bestScore) {
+              bestScore = score;
+              bestPoint = projected;
+            }
           }
         }
-      }
 
-      if (bestPoint) {
-        return bestPoint;
+        if (bestPoint) {
+          snapCache.set(cacheKey, bestPoint);
+          return bestPoint;
+        }
+      } catch (fetchError) {
+        console.warn(`Overpass API error at radius ${radius}:`, fetchError);
+        continue;
       }
     }
 
-    // Fallback jika tidak ketemu jalan besar
     return point;
   } catch (e) {
-    console.warn("snapToMajorRoad gagal:", e);
+    console.warn("snapToMajorRoad failed:", e);
     return point;
   }
 }
@@ -86,8 +135,11 @@ function squaredDistance(a: RouteCoordinate, b: RouteCoordinate): number {
   return dLat * dLat + dLng * dLng;
 }
 
-// Proyeksi titik ke segmen (koordinat geodesi diperlakukan sebagai planar lokal untuk jarak pendek)
-function projectPointOnSegment(p: RouteCoordinate, a: RouteCoordinate, b: RouteCoordinate): RouteCoordinate {
+function projectPointOnSegment(
+  p: RouteCoordinate,
+  a: RouteCoordinate,
+  b: RouteCoordinate
+): RouteCoordinate {
   const ax = a.lng, ay = a.lat;
   const bx = b.lng, by = b.lat;
   const px = p.lng, py = p.lat;
@@ -108,200 +160,11 @@ function projectPointOnSegment(p: RouteCoordinate, a: RouteCoordinate, b: RouteC
 }
 
 /**
- * Fetch route between two points using OSRM
+ * Calculate total distance of a route in kilometers
  */
-export async function getRouteBetweenPoints(
-  start: RouteCoordinate,
-  end: RouteCoordinate,
-  profile: 'driving-car' | 'foot-walking' = 'driving-car'
-): Promise<RouteCoordinate[]> {
-  try {
-    // 1) Coba OpenRouteService terlebih dahulu (Directions v2)
-    if (ORS_API_KEY) {
-      try {
-        const orsResp = await fetch(`https://api.openrouteservice.org/v2/directions/${profile}/geojson`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: ORS_API_KEY,
-          },
-          body: JSON.stringify({
-            coordinates: [
-              [start.lng, start.lat],
-              [end.lng, end.lat],
-            ],
-            instructions: false,
-            geometry_simplify: false,
-            preference: "recommended",
-          }),
-        });
-
-        if (orsResp.ok) {
-          const orsData = await orsResp.json();
-          const coords = orsData?.features?.[0]?.geometry?.coordinates;
-          if (Array.isArray(coords) && coords.length > 1) {
-            return coords.map((c: number[]) => ({ lat: c[1], lng: c[0] }));
-          }
-        }
-      } catch (_) {
-        // lanjut ke OSRM
-      }
-    }
-
-    // 2) Fallback OSRM publik (multi-mirror + retry/backoff)
-    // OSRM Public server usually supports 'driving', 'walking' might be under different endpoint or profile
-    // Standard OSRM demo server profiles: /route/v1/driving, /route/v1/walking, /route/v1/cycling
-
-    const osrmProfile = profile === 'foot-walking' ? 'walking' : 'driving';
-
-    const baseUrls = [
-      "https://router.project-osrm.org",
-      "https://routing.openstreetmap.de/routed-car", // Note: routed-car might only support car
-      "https://osrm.mfdz.de",
-      "https://routing.anyways.eu/osrm",
-    ];
-
-    // For walking, some mirrors might not work, so we prioritize the main one
-    const urlsToUse = profile === 'foot-walking'
-      ? ["https://router.project-osrm.org"]
-      : baseUrls;
-
-    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-    for (const base of urlsToUse) {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const url = `${base}/route/v1/${osrmProfile}/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&alternatives=false`;
-          const response = await fetch(url, { mode: "cors" });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const data = await response.json();
-          if (data?.code === "Ok" && data.routes && data.routes.length > 0) {
-            const coordinates = data.routes[0].geometry.coordinates;
-            return coordinates.map((coord: number[]) => ({ lat: coord[1], lng: coord[0] }));
-          }
-        } catch (_) {
-          await sleep(150 * Math.pow(2, attempt));
-          continue;
-        }
-      }
-    }
-
-    // Fallback to straight line if routing fails
-    return [start, end];
-  } catch (error) {
-    console.error("Routing error:", error);
-    // Fallback to straight line
-    return [start, end];
-  }
-}
-
-/**
- * Get complete route path for multiple stops
- * This will fetch routes between consecutive stops
- */
-export async function getCompleteRoute(
-  stops: RouteCoordinate[]
-): Promise<RouteCoordinate[]> {
-  if (stops.length < 2) return stops;
-
-  const allCoordinates: RouteCoordinate[] = [];
-
-  // Fetch routes between consecutive stops
-  for (let i = 0; i < stops.length - 1; i++) {
-    const segment = await getRouteBetweenPoints(stops[i], stops[i + 1]);
-
-    // Add coordinates, avoiding duplicates at connection points
-    if (i === 0) {
-      allCoordinates.push(...segment);
-    } else {
-      allCoordinates.push(...segment.slice(1));
-    }
-  }
-
-  return allCoordinates;
-}
-
-/**
- * Batch routing with rate limiting
- * OSRM has rate limits, so we space out requests
- */
-export async function getCompleteRouteWithRateLimit(
-  stops: RouteCoordinate[],
-  onProgress?: (progress: number) => void
-): Promise<RouteCoordinate[]> {
-  if (stops.length < 2) return stops;
-
-  const allCoordinates: RouteCoordinate[] = [];
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-  // Coba satu kali request OpenRouteService untuk seluruh halte (lebih stabil)
-  if (ORS_API_KEY) {
-    try {
-      const orsResp = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: ORS_API_KEY,
-        },
-        body: JSON.stringify({
-          coordinates: stops.map(s => [s.lng, s.lat]),
-          instructions: false,
-          geometry_simplify: false,
-          preference: "recommended",
-        }),
-      });
-      if (orsResp.ok) {
-        const orsData = await orsResp.json();
-        const coords = orsData?.features?.[0]?.geometry?.coordinates;
-        if (Array.isArray(coords) && coords.length > 1) {
-          const route = coords.map((c: number[]) => ({ lat: c[1], lng: c[0] }));
-          if (onProgress) onProgress(100);
-          return route;
-        }
-      }
-    } catch (_) {
-      // lanjut ke metode segmen
-    }
-  }
-
-  // Snap seluruh titik ke jalan besar terlebih dahulu (rate-limited)
-  const snappedStops: RouteCoordinate[] = [];
-  for (let i = 0; i < stops.length; i++) {
-    const snapped = await snapToMajorRoad(stops[i]);
-    snappedStops.push(snapped);
-    if (i < stops.length - 1) {
-      await delay(80);
-    }
-  }
-
-  for (let i = 0; i < snappedStops.length - 1; i++) {
-    const segment = await getRouteBetweenPoints(snappedStops[i], snappedStops[i + 1]);
-
-    if (i === 0) {
-      allCoordinates.push(...segment);
-    } else {
-      allCoordinates.push(...segment.slice(1));
-    }
-
-    // Report progress
-    if (onProgress) {
-      const progress = ((i + 1) / (snappedStops.length - 1)) * 100;
-      onProgress(progress);
-    }
-
-    // Small delay to respect rate limits (only if not the last segment)
-    if (i < snappedStops.length - 2) {
-      await delay(100);
-    }
-  }
-
-  return allCoordinates;
-}
-
-/**
- * Calculate total distance of a route in kilometers using Haversine formula
- * This calculates the distance along the route path
- */
-export function calculateRouteDistance(coordinates: RouteCoordinate[]): number {
+export function calculateRouteDistance(
+  coordinates: RouteCoordinate[]
+): number {
   if (coordinates.length < 2) return 0;
 
   let totalDistance = 0;
@@ -314,20 +177,20 @@ export function calculateRouteDistance(coordinates: RouteCoordinate[]): number {
   return totalDistance;
 }
 
-/**
- * Haversine formula to calculate distance between two coordinates in kilometers
- */
-function haversineDistance(coord1: RouteCoordinate, coord2: RouteCoordinate): number {
-  const R = 6371; // Earth's radius in kilometers
+function haversineDistance(
+  coord1: RouteCoordinate,
+  coord2: RouteCoordinate
+): number {
+  const R = 6371;
   const dLat = toRadians(coord2.lat - coord1.lat);
   const dLon = toRadians(coord2.lng - coord1.lng);
 
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(toRadians(coord1.lat)) *
-    Math.cos(toRadians(coord2.lat)) *
-    Math.sin(dLon / 2) *
-    Math.sin(dLon / 2);
+      Math.cos(toRadians(coord2.lat)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
@@ -338,69 +201,65 @@ function toRadians(degrees: number): number {
 }
 
 /**
- * Get route distance from routing API response (more accurate)
- * This extracts distance from OpenRouteService or OSRM response
+ * Get route distance from API
  */
 export async function getRouteDistance(
   start: RouteCoordinate,
   end: RouteCoordinate
 ): Promise<number | null> {
   try {
-    // Try OpenRouteService first
+    await waitForRateLimit();
+
     if (ORS_API_KEY) {
       try {
-        const orsResp = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: ORS_API_KEY,
-          },
-          body: JSON.stringify({
-            coordinates: [
-              [start.lng, start.lat],
-              [end.lng, end.lat],
-            ],
-            instructions: false,
-            geometry_simplify: false,
-            preference: "recommended",
-          }),
-        });
+        const orsResp = await fetch(
+          "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: ORS_API_KEY,
+            },
+            body: JSON.stringify({
+              coordinates: [
+                [start.lng, start.lat],
+                [end.lng, end.lat],
+              ],
+              instructions: false,
+              geometry_simplify: false,
+              preference: "recommended",
+            }),
+          }
+        );
 
         if (orsResp.ok) {
           const orsData = await orsResp.json();
-          const distance = orsData?.features?.[0]?.properties?.segments?.[0]?.distance;
+          const distance =
+            orsData?.features?.[0]?.properties?.segments?.[0]
+              ?.distance;
           if (typeof distance === "number") {
-            return distance / 1000; // Convert meters to kilometers
+            return distance / 1000;
           }
         }
-      } catch (_) {
-        // Continue to OSRM
+      } catch (error) {
+        console.warn("ORS distance fetch failed:", error);
       }
     }
 
-    // Try OSRM
-    const baseUrls = [
-      "https://router.project-osrm.org",
-      "https://routing.openstreetmap.de/routed-car",
-      "https://osrm.mfdz.de",
-      "https://routing.anyways.eu/osrm",
-    ];
+    const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=false&alternatives=false`;
+    const response = await fetch(url, { mode: "cors" });
 
-    for (const base of baseUrls) {
-      try {
-        const url = `${base}/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=false&alternatives=false`;
-        const response = await fetch(url, { mode: "cors" });
-        if (response.ok) {
-          const data = await response.json();
-          if (data?.code === "Ok" && data.routes && data.routes.length > 0) {
-            const distance = data.routes[0].distance;
-            if (typeof distance === "number") {
-              return distance / 1000; // Convert meters to kilometers
-            }
-          }
+    if (response.ok) {
+      const data = await response.json();
+      if (
+        data?.code === "Ok" &&
+        data.routes &&
+        data.routes.length > 0
+      ) {
+        const distance = data.routes[0].distance;
+        if (typeof distance === "number") {
+          return distance / 1000;
         }
-      } catch (_) {
-        continue;
       }
     }
 
@@ -411,9 +270,123 @@ export async function getRouteDistance(
   }
 }
 
-// --- NEARBY STOPS LOGIC ---
+/**
+ * Get route between two points using OpenRouteService or OSRM
+ */
+export async function getRouteBetweenPoints(
+  start: RouteCoordinate,
+  end: RouteCoordinate,
+  profile: 'driving-car' | 'foot-walking' = 'driving-car'
+): Promise<RouteCoordinate[]> {
+  const cacheKey = `${start.lat},${start.lng}-${end.lat},${end.lng}-${profile}`;
+  
+  if (routeCache.has(cacheKey)) {
+    return routeCache.get(cacheKey)!;
+  }
 
-// ✅ PERBAIKAN: Hanya import types, bukan data
+  try {
+    await waitForRateLimit();
+
+    // Try OpenRouteService first
+    if (ORS_API_KEY) {
+      try {
+        const orsResp = await fetch(
+          `https://api.openrouteservice.org/v2/directions/${profile}/geojson`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: ORS_API_KEY,
+            },
+            body: JSON.stringify({
+              coordinates: [
+                [start.lng, start.lat],
+                [end.lng, end.lat],
+              ],
+              instructions: false,
+            }),
+          }
+        );
+
+        if (orsResp.ok) {
+          const orsData = await orsResp.json();
+          const coordinates = orsData?.features?.[0]?.geometry?.coordinates;
+          if (coordinates && Array.isArray(coordinates)) {
+            const route = coordinates.map((coord: number[]) => ({
+              lat: coord[1],
+              lng: coord[0],
+            }));
+            routeCache.set(cacheKey, route);
+            return route;
+          }
+        }
+      } catch (error) {
+        console.warn("ORS routing failed:", error);
+      }
+    }
+
+    // Fallback to OSRM (only supports driving)
+    if (profile === 'driving-car') {
+      const osrmProfile = 'driving';
+      const url = `https://router.project-osrm.org/route/v1/${osrmProfile}/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`;
+      const response = await fetch(url, { mode: "cors" });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data?.code === "Ok" && data.routes && data.routes.length > 0) {
+          const coordinates = data.routes[0].geometry.coordinates;
+          const route = coordinates.map((coord: number[]) => ({
+            lat: coord[1],
+            lng: coord[0],
+          }));
+          routeCache.set(cacheKey, route);
+          return route;
+        }
+      }
+    }
+
+    // If all else fails, return a straight line
+    const straightLine = [start, end];
+    routeCache.set(cacheKey, straightLine);
+    return straightLine;
+  } catch (error) {
+    console.error("Error getting route:", error);
+    return [start, end];
+  }
+}
+
+/**
+ * Get complete route with rate limiting and progress callback
+ */
+export async function getCompleteRouteWithRateLimit(
+  stops: RouteCoordinate[],
+  onProgress?: (progress: number) => void
+): Promise<RouteCoordinate[]> {
+  if (stops.length < 2) return stops;
+
+  const completeRoute: RouteCoordinate[] = [];
+  const totalSegments = stops.length - 1;
+
+  for (let i = 0; i < stops.length - 1; i++) {
+    const segmentRoute = await getRouteBetweenPoints(stops[i], stops[i + 1]);
+    
+    // Add segment route, avoiding duplicate points
+    if (i === 0) {
+      completeRoute.push(...segmentRoute);
+    } else {
+      completeRoute.push(...segmentRoute.slice(1));
+    }
+
+    if (onProgress) {
+      const progress = Math.round(((i + 1) / totalSegments) * 100);
+      onProgress(progress);
+    }
+  }
+
+  return completeRoute;
+}
+
+// Nearby stops logic
 import { Halte, Koridor } from "@/data/corridorData";
 
 export interface NearestHalte {
@@ -425,16 +398,25 @@ export interface NearestHalte {
   walkTimeMinutes: number;
 }
 
-function getDistanceFromLatLonInKm(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371; // Radius of the earth in km
+function getDistanceFromLatLonInKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+) {
+  const R = 6371;
   const dLat = deg2rad(lat2 - lat1);
   const dLon = deg2rad(lon2 - lon1);
+
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    Math.cos(deg2rad(lat1)) *
+      Math.cos(deg2rad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const d = R * c; // Distance in km
+  const d = R * c;
   return d;
 }
 
@@ -442,20 +424,24 @@ function deg2rad(deg: number) {
   return deg * (Math.PI / 180);
 }
 
-// ✅ PERBAIKAN: Tambah parameter koridorData
 export function findNearestStops(
   userLat: number,
   userLng: number,
-  koridorData: Koridor[], // ✅ Terima sebagai parameter, bukan hardcoded
+  koridorData: Koridor[],
   limit: number = 3
 ): NearestHalte[] {
   const allHalteDistance: NearestHalte[] = [];
-  const WALKING_SPEED_KMH = 4.8; // Average walking speed
+  const WALKING_SPEED_KMH = 4.8;
 
   koridorData.forEach((koridor) => {
     koridor.halte.forEach((halte) => {
-      const distKm = getDistanceFromLatLonInKm(userLat, userLng, halte.lat, halte.lng);
-      const walkTime = (distKm / WALKING_SPEED_KMH) * 60; // minutes
+      const distKm = getDistanceFromLatLonInKm(
+        userLat,
+        userLng,
+        halte.lat,
+        halte.lng
+      );
+      const walkTime = (distKm / WALKING_SPEED_KMH) * 60;
 
       allHalteDistance.push({
         halte: halte,
@@ -468,7 +454,6 @@ export function findNearestStops(
     });
   });
 
-  // Sort by distance ASC
   return allHalteDistance
     .sort((a, b) => a.distanceMeter - b.distanceMeter)
     .slice(0, limit);

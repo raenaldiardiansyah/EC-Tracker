@@ -26,6 +26,8 @@ const Index = () => {
   const [routesCache, setRoutesCacheState] = useState<Map<number, RouteCoordinate[]>>(new Map());
   const [searchedLocation, setSearchedLocation] = useState<{ lat: number; lng: number; displayName: string } | null>(null);
   const [nearestStops, setNearestStops] = useState<NearestHalte[]>([]);
+  // State untuk tracking chatbot open/close
+  const [isChatbotOpen, setIsChatbotOpen] = useState(false);
 
   // Fetch data from Supabase
   const { data: koridors = [], isLoading } = useQuery({
@@ -177,15 +179,19 @@ const Index = () => {
             koridorData={koridors}
             visibleStops={searchedLocation && nearestStops.length > 0 ? nearestStops.map(n => n.halte) : null}
           />
+          
+          {/* Pass isChatbotOpen prop to SearchControl */}
           <SearchControl
             onLocationSelect={(lat, lng, displayName) => {
               setSearchedLocation({ lat, lng, displayName });
               setNearestStops(findNearestStops(lat, lng, koridors));
             }}
+            isChatbotOpen={isChatbotOpen}
           />
 
           {/* Nearest Stops Card */}
-          {searchedLocation && nearestStops.length > 0 && (
+          {/* Hide when chatbot is open */}
+          {searchedLocation && nearestStops.length > 0 && !isChatbotOpen && (
             <div className="absolute top-24 left-6 z-10 w-full max-w-sm">
               <div className="bg-card/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-4 animate-in slide-in-from-left-2 duration-300">
                 <div className="flex items-center justify-between mb-3 border-b pb-2">
@@ -249,20 +255,23 @@ const Index = () => {
         </div>
 
         {/* Info Badge */}
-        <div className="absolute bottom-6 right-6 bg-card/90 backdrop-blur-sm border border-border rounded-lg p-3 shadow-lg hidden lg:block z-10">
-          <div className="flex items-start gap-2 text-sm">
-            <Info className="h-4 w-4 text-primary mt-0.5" />
-            <div>
-              <p className="font-semibold text-foreground">Peta Interaktif</p>
-              <p className="text-muted-foreground text-xs">
-                Klik marker atau pilih koridor
-              </p>
+        {/* Hide when chatbot is open */}
+        {!isChatbotOpen && (
+          <div className="absolute bottom-6 right-6 bg-card/90 backdrop-blur-sm border border-border rounded-lg p-3 shadow-lg hidden lg:block z-10">
+            <div className="flex items-start gap-2 text-sm">
+              <Info className="h-4 w-4 text-primary mt-0.5" />
+              <div>
+                <p className="font-semibold text-foreground">Peta Interaktif</p>
+                <p className="text-muted-foreground text-xs">
+                  Klik marker atau pilih koridor
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* ChatBot */}
-        <ChatBot />
+        {/* Pass onOpenChange callback to ChatBot */}
+        <ChatBot onOpenChange={setIsChatbotOpen} />
       </div>
     </div>
   );
