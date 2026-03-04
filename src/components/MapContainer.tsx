@@ -6,8 +6,8 @@ export interface Vehicle {
   id: number;
   lat: number;
   lng: number;
-  heading?: number; // derajat 0-360
-  speed?: number;   // km/h
+  heading?: number; 
+  speed?: number;   
   label?: string;
 }
 
@@ -20,13 +20,13 @@ const MapContainer = ({
   vehicles = [],
   isTrackingActive = false,
 }: MapContainerProps) => {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
+  const mapRef            = useRef<HTMLDivElement>(null);
+  const mapInstanceRef    = useRef<L.Map | null>(null);
   const vehicleMarkersRef = useRef<Map<number, L.Marker>>(new Map());
-  const trailRef = useRef<Map<number, L.Polyline>>(new Map());
-  const trailPointsRef = useRef<Map<number, [number, number][]>>(new Map());
+  const trailRef          = useRef<Map<number, L.Polyline>>(new Map());
+  const trailPointsRef    = useRef<Map<number, [number, number][]>>(new Map());
 
-  // Init map
+  
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
 
@@ -34,42 +34,36 @@ const MapContainer = ({
 
     const osmLayer = L.tileLayer(
       "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      {
-        maxZoom: 19,
-        attribution:
-          '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      }
+      { maxZoom: 19, attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>' }
     );
 
     const googleStreetsLayer = L.tileLayer(
       "https://{s}.google.com/vt?lyrs=m&x={x}&y={y}&z={z}",
-      { maxZoom: 19, subdomains: ["mt0", "mt1", "mt2", "mt3"] }
+      { maxZoom: 19, subdomains: ["mt0","mt1","mt2","mt3"] }
     );
 
     const googleHybridLayer = L.tileLayer(
       "https://{s}.google.com/vt?lyrs=s,h&x={x}&y={y}&z={z}",
-      { maxZoom: 19, subdomains: ["mt0", "mt1", "mt2", "mt3"] }
+      { maxZoom: 19, subdomains: ["mt0","mt1","mt2","mt3"] }
     );
 
     const googleTrafficLayer = L.tileLayer(
       "https://{s}.google.com/vt?lyrs=m,traffic&x={x}&y={y}&z={z}",
-      { maxZoom: 19, subdomains: ["mt0", "mt1", "mt2", "mt3"] }
+      { maxZoom: 19, subdomains: ["mt0","mt1","mt2","mt3"] }
     );
 
     osmLayer.addTo(map);
 
-    L.control
-      .layers(
-        {
-          "Open Street Map": osmLayer,
-          "Google Maps": googleStreetsLayer,
-          Satelit: googleHybridLayer,
-          "Google Traffic": googleTrafficLayer,
-        },
-        undefined,
-        { position: "topright", collapsed: false }
-      )
-      .addTo(map);
+    L.control.layers(
+      {
+        "Open Street Map" : osmLayer,
+        "Google Maps"     : googleStreetsLayer,
+        "Satelit"         : googleHybridLayer,
+        "Google Traffic"  : googleTrafficLayer,
+      },
+      undefined,
+      { position: "topright", collapsed: false }
+    ).addTo(map);
 
     mapInstanceRef.current = map;
 
@@ -79,15 +73,26 @@ const MapContainer = ({
     };
   }, []);
 
-  // Update vehicle markers & trail
+  // ── Update marker & trail ─────────────────────────────────────────────────
   useEffect(() => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
 
     vehicles.forEach((vehicle) => {
-      const { id, lat, lng, heading = 0, speed = 0, label = `AGV ${id}` } = vehicle;
+      // ── Guard: pastikan lat & lng valid ────────────────────────────────
+      if (
+        vehicle.lat == null || vehicle.lng == null ||
+        isNaN(vehicle.lat)  || isNaN(vehicle.lng)
+      ) return;
 
-      // Buat icon panah sesuai heading
+      const id      = vehicle.id;
+      const lat     = vehicle.lat;
+      const lng     = vehicle.lng;
+      const heading = vehicle.heading ?? 0;   // dihitung dari delta GPS di hook
+      const speed   = vehicle.speed   ?? 0;   // dihitung dari delta GPS di hook
+      const label   = vehicle.label   ?? `AGV ${id}`;
+
+      // ── Icon panah sesuai heading ───────────────────────────────────────
       const arrowIcon = L.divIcon({
         className: "",
         html: `
@@ -99,24 +104,18 @@ const MapContainer = ({
             align-items: center;
             justify-content: center;
           ">
-            <!-- Lingkaran biru -->
             <div style="
-              width: 36px;
-              height: 36px;
+              width: 36px; height: 36px;
               background: #2563EB;
               border: 3px solid white;
               border-radius: 50%;
               box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-              display: flex;
-              align-items: center;
-              justify-content: center;
+              display: flex; align-items: center; justify-content: center;
               position: absolute;
             "></div>
-            <!-- Panah arah -->
             <div style="
               position: absolute;
-              width: 0;
-              height: 0;
+              width: 0; height: 0;
               border-left: 7px solid transparent;
               border-right: 7px solid transparent;
               border-bottom: 18px solid white;
@@ -126,7 +125,7 @@ const MapContainer = ({
             "></div>
           </div>
         `,
-        iconSize: [40, 40],
+        iconSize:   [40, 40],
         iconAnchor: [20, 20],
       });
 
@@ -146,55 +145,49 @@ const MapContainer = ({
           </p>
           <p style="margin: 0; font-size: 12px;">
             ⚡ <b>Kecepatan:</b> ${speed.toFixed(1)} km/h
+            <span style="font-size:10px; color:#64748b;">(dari GPS)</span>
           </p>
         </div>
       `;
 
       if (vehicleMarkersRef.current.has(id)) {
-        // Update posisi & icon
         const marker = vehicleMarkersRef.current.get(id)!;
         marker.setLatLng([lat, lng]);
         marker.setIcon(arrowIcon);
         marker.getPopup()?.setContent(popupContent);
       } else {
-        // Buat marker baru
         const marker = L.marker([lat, lng], { icon: arrowIcon })
           .addTo(map)
           .bindPopup(popupContent);
         vehicleMarkersRef.current.set(id, marker);
       }
 
-      // Update trail (jejak rute)
+      
       if (!trailPointsRef.current.has(id)) {
         trailPointsRef.current.set(id, []);
       }
 
       const points = trailPointsRef.current.get(id)!;
       points.push([lat, lng]);
-
-      // Batasi trail max 200 titik
       if (points.length > 200) points.shift();
 
       if (trailRef.current.has(id)) {
         trailRef.current.get(id)!.setLatLngs(points);
       } else {
         const trail = L.polyline(points, {
-          color: "#2563EB",
-          weight: 3,
-          opacity: 0.6,
-          dashArray: "6, 4",
+          color: "#2563EB", weight: 3, opacity: 0.6, dashArray: "6, 4",
         }).addTo(map);
         trailRef.current.set(id, trail);
       }
 
-      // Auto follow kendaraan saat tracking aktif
+      {/* Auto follow */}
       if (isTrackingActive) {
         map.panTo([lat, lng], { animate: true, duration: 0.5 });
       }
     });
   }, [vehicles, isTrackingActive]);
 
-  // Bersihkan trail saat tracking stop
+  {/*Bersihkan trail saat tracking stop*/}
   useEffect(() => {
     if (!isTrackingActive) {
       trailPointsRef.current.clear();
@@ -207,36 +200,20 @@ const MapContainer = ({
     <div className="relative w-full h-full">
       <div ref={mapRef} className="w-full h-full rounded-lg z-0" />
 
-      {/* Badge status tracking */}
       {isTrackingActive && (
-        <div
-          style={{
-            position: "absolute",
-            top: 12,
-            left: 12,
-            zIndex: 1000,
-            background: "#2563EB",
-            color: "white",
-            padding: "6px 14px",
-            borderRadius: 999,
-            fontSize: 13,
-            fontWeight: 600,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              background: "#4ade80",
-              borderRadius: "50%",
-              display: "inline-block",
-              animation: "pulse 1.5s infinite",
-            }}
-          />
+        <div style={{
+          position: "absolute", top: 12, left: 12, zIndex: 1000,
+          background: "#2563EB", color: "white",
+          padding: "6px 14px", borderRadius: 999,
+          fontSize: 13, fontWeight: 600,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+          display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <span style={{
+            width: 8, height: 8, background: "#4ade80",
+            borderRadius: "50%", display: "inline-block",
+            animation: "pulse 1.5s infinite",
+          }} />
           GPS Aktif
         </div>
       )}
