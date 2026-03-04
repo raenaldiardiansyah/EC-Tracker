@@ -1,18 +1,13 @@
-import { useEffect, useState, useRef } from "react";
-import mqtt from "mqtt";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { mqttClient, TOPICS } from "@/lib/MqttClient";
 import { Vehicle } from "@/components/MapContainer";
 
-// ── MQTT Config ───────────────────────────────────────────────────────────────
-const BROKER_URL    = "wss://broker.hivemq.com:8884/mqtt";
-const TOPIC_GPS     = "agv/raenaldiAS/vpin/V1"; // { lat, lng } — hanya koordinat
-const TOPIC_BATTERY = "agv/raenaldiAS/vpin/V2"; // angka volt (voltage divider)
+const MS_TO_KMH     = 3.6;
+const MS_TO_MPH     = 2.23694;
+const HISTORY_MAX   = 60;
+const MIN_DIST_M    = 3.0;
+const MIN_DIST_HEAD = 1.5;  // turun dari 2.0 → heading lebih cepat update
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-const MS_TO_KMH   = 3.6;
-const MS_TO_MPH   = 2.23694;
-const HISTORY_MAX = 60;
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 export interface SpeedHistory {
   speedKmh:  number;
   speedMph:  number;
@@ -20,8 +15,17 @@ export interface SpeedHistory {
   timestamp: number;
 }
 
-// ── Helper: Jarak dua koordinat dalam meter (Haversine) ───────────────────────
-const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+export interface MqttStatus {
+  connected:    boolean;
+  reconnecting: boolean;
+  error:        string | null;
+  attempts:     number;
+}
+
+const haversineMeters = (
+  lat1: number, lng1: number,
+  lat2: number, lng2: number
+): number => {
   const R    = 6371000;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLng = ((lng2 - lng1) * Math.PI) / 180;
@@ -33,46 +37,51 @@ const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number)
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-// ── Helper: Heading dari 2 koordinat (0 = Utara) ─────────────────────────────
-const calcHeading = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
-  const dLng = lng2 - lng1;
-  const dLat = lat2 - lat1;
-  return (Math.atan2(dLng, dLat) * 180 / Math.PI + 360) % 360;
+const calcBearing = (
+  lat1: number, lng1: number,
+  lat2: number, lng2: number
+): number => {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const φ1    = toRad(lat1);
+  const φ2    = toRad(lat2);
+  const dλ    = toRad(lng2 - lng1);
+  const x     = Math.sin(dλ) * Math.cos(φ2);
+  const y     = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(dλ);
+  return (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;
 };
 
-// ── Helper: Arah heading → teks ───────────────────────────────────────────────
-export const getHeadingText = (heading: number): string => {
-  if (heading >= 337.5 || heading < 22.5)  return "Utara ⬆️";
-  if (heading >= 22.5  && heading < 67.5)  return "Timur Laut ↗️";
-  if (heading >= 67.5  && heading < 112.5) return "Timur ➡️";
-  if (heading >= 112.5 && heading < 157.5) return "Tenggara ↘️";
-  if (heading >= 157.5 && heading < 202.5) return "Selatan ⬇️";
-  if (heading >= 202.5 && heading < 247.5) return "Barat Daya ↙️";
-  if (heading >= 247.5 && heading < 292.5) return "Barat ⬅️";
-  if (heading >= 292.5 && heading < 337.5) return "Barat Laut ↖️";
-  return "Utara ⬆️";
+const smoothHeading = (prev: number, next: number, alpha = 0.7): number => {
+  let diff = next - prev;
+  if (diff >  180) diff -= 360;
+  if (diff < -180) diff += 360;
+  return (prev + alpha * diff + 360) % 360;
 };
 
-// ── Helper: Speed → teks ──────────────────────────────────────────────────────
+export const getHeadingText = (h: number): string => {
+  if (h >= 337.5 || h < 22.5) return "Utara ⬆️";
+  if (h < 67.5)                return "Timur Laut ↗️";
+  if (h < 112.5)               return "Timur ➡️";
+  if (h < 157.5)               return "Tenggara ↘️";
+  if (h < 202.5)               return "Selatan ⬇️";
+  if (h < 247.5)               return "Barat Daya ↙️";
+  if (h < 292.5)               return "Barat ⬅️";
+  return                              "Barat Laut ↖️";
+};
+
 export const getSpeedText = (speed: number): string => {
-  if (speed <= 0) return "Berhenti 🛑";
-  if (speed < 5)  return "Sangat Pelan 🐢";
-  if (speed < 15) return "Pelan 🚶";
-  if (speed < 30) return "Sedang 🚗";
-  return "Cepat 🚀";
+  if (speed <= 0)  return "Berhenti 🛑";
+  if (speed < 20)  return "Sangat Pelan 🐢";
+  if (speed < 40)  return "Pelan 🏙️";
+  if (speed < 60)  return "Sedang 🚗";
+  if (speed < 100) return "Kencang ⚡";
+  return "Sangat Kencang 🚀";
 };
 
-// ── Helper: Koordinat → Nama Lokasi (Reverse Geocoding) ───────────────────────
 export const getLocationName = async (lat: number, lng: number): Promise<string> => {
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-      {
-        headers: {
-          "Accept-Language": "id",
-          "User-Agent":      "AGV-Dashboard/1.0",
-        },
-      }
+      { headers: { "Accept-Language": "id", "User-Agent": "EC-Dashboard/1.0" } }
     );
     if (!res.ok) return "Gagal mendapat lokasi";
     const data = await res.json();
@@ -93,84 +102,108 @@ export const getLocationName = async (lat: number, lng: number): Promise<string>
   }
 };
 
-// ── Main Hook ─────────────────────────────────────────────────────────────────
 export const useGPSTracking = () => {
   const [vehicle,          setVehicle]          = useState<Vehicle | null>(null);
-  const [isConnected,      setIsConnected]      = useState(false);
   const [isTrackingActive, setIsTrackingActive] = useState(false);
   const [battery,          setBattery]          = useState<number | null>(null);
-  const [locationName,     setLocationName]     = useState<string>("Menunggu GPS...");
+  const [locationName,     setLocationName]     = useState("Menunggu GPS...");
+  const [speedKmh,         setSpeedKmh]         = useState(0);
+  const [speedMph,         setSpeedMph]         = useState(0);
+  const [speedMs,          setSpeedMs]          = useState(0);
+  const [maxSpeedKmh,      setMaxSpeedKmh]      = useState(0);
+  const [speedHistory,     setSpeedHistory]     = useState<SpeedHistory[]>([]);
+  const [mqttStatus,       setMqttStatus]       = useState<MqttStatus>({
+    connected:    mqttClient.connected,
+    reconnecting: false,
+    error:        null,
+    attempts:     0,
+  });
 
-  const [speedKmh,     setSpeedKmh]     = useState<number>(0);
-  const [speedMph,     setSpeedMph]     = useState<number>(0);
-  const [speedMs,      setSpeedMs]      = useState<number>(0);
-  const [maxSpeedKmh,  setMaxSpeedKmh]  = useState<number>(0);
-  const [speedHistory, setSpeedHistory] = useState<SpeedHistory[]>([]);
-
-  // Posisi & waktu terakhir untuk hitung kecepatan
-  const prevPosRef     = useRef<{ lat: number; lng: number; time: number } | null>(null);
+  const prevPosRef     = useRef<{ lat: number; lng: number; time: number; heading: number } | null>(null);
   const lastGeocodeRef = useRef<{ lat: number; lng: number } | null>(null);
+  const mountedRef     = useRef(true);
 
   useEffect(() => {
-    const client = mqtt.connect(BROKER_URL, {
-      clientId:        `agv_${Math.random().toString(16).slice(2, 8)}`,
-      clean:           true,
-      connectTimeout:  8000,
-      reconnectPeriod: 3000,
-      keepalive:       30,
-      protocolVersion: 4,
-    });
+    mountedRef.current = true;
 
-    client.on("connect", () => {
-      setIsConnected(true);
-      client.subscribe(TOPIC_GPS,     { qos: 0 });
-      client.subscribe(TOPIC_BATTERY, { qos: 0 });
-    });
+    const onConnect = () => {
+      if (!mountedRef.current) return;
+      setMqttStatus({ connected: true, reconnecting: false, error: null, attempts: 0 });
+    };
 
-    client.on("message", (topic, message) => {
+    const onReconnect = () => {
+      if (!mountedRef.current) return;
+      setMqttStatus(prev => ({
+        ...prev,
+        connected:    false,
+        reconnecting: true,
+        attempts:     prev.attempts + 1,
+      }));
+    };
+
+    const onOffline = () => {
+      if (!mountedRef.current) return;
+      setMqttStatus(prev => ({ ...prev, connected: false }));
+      setIsTrackingActive(false);
+    };
+
+    const onClose = () => {
+      if (!mountedRef.current) return;
+      setMqttStatus(prev => ({ ...prev, connected: false }));
+      setIsTrackingActive(false);
+    };
+
+    const onError = (err: Error) => {
+      if (!mountedRef.current) return;
+      console.error("❌ MQTT Error:", err.message);
+      setMqttStatus(prev => ({ ...prev, error: err.message }));
+    };
+
+    const onMessage = (topic: string, message: Buffer) => {
+      if (!mountedRef.current) return;
       try {
-        // ── V1: GPS ──────────────────────────────────────────────────────────
-        if (topic === TOPIC_GPS) {
+        if (topic === TOPICS.GPS) {
           const data = JSON.parse(message.toString());
-
-          // Guard: pastikan lat & lng valid
           if (data.lat == null || data.lng == null) return;
           if (isNaN(data.lat) || isNaN(data.lng))   return;
 
-          const now = Date.now();
+          const now  = Date.now();
+          const prev = prevPosRef.current;
+          let ms     = 0;
+          let heading = prev?.heading ?? 0;
 
-          // ── Hitung kecepatan dari delta posisi + delta waktu ──────────────
-          let ms      = 0;
-          let heading = 0;
-
-          if (prevPosRef.current) {
-            const dtSec = (now - prevPosRef.current.time) / 1000;
-            const distM = haversineMeters(
-              prevPosRef.current.lat, prevPosRef.current.lng,
-              data.lat, data.lng
-            );
-            ms      = dtSec > 0 ? distM / dtSec : 0;
-            heading = calcHeading(
-              prevPosRef.current.lat, prevPosRef.current.lng,
-              data.lat, data.lng
-            );
+          // ── Kecepatan ──────────────────────────────────────────────────────
+          if (data.speed != null && !isNaN(data.speed)) {
+            ms = Math.max(0, parseFloat(data.speed));
+          } else if (prev) {
+            const dtSec = (now - prev.time) / 1000;
+            const distM = haversineMeters(prev.lat, prev.lng, data.lat, data.lng);
+            if (distM >= MIN_DIST_M && dtSec > 0 && dtSec < 5) {
+              ms = distM / dtSec;
+            }
           }
 
-          prevPosRef.current = { lat: data.lat, lng: data.lng, time: now };
+          // ── Heading / Kompas ───────────────────────────────────────────────
+          // course dari ESP32 tidak bergantung pada speed
+          // heading hanya freeze saat benar-benar diam (ms < 0.3)
+          if (data.course != null && !isNaN(data.course) && data.course > 0) {
+              heading = smoothHeading(heading, parseFloat(data.course), 0.7);
+            } else if (prev && ms > 0.3) {
+            heading = smoothHeading(heading, parseFloat(data.course), 0.7);
+           } else if (prev && ms > 0.3) {
+            const distM = haversineMeters(prev.lat, prev.lng, data.lat, data.lng);
+            if (distM >= MIN_DIST_HEAD) {
+              const rawBearing = calcBearing(prev.lat, prev.lng, data.lat, data.lng);
+              heading = smoothHeading(heading, rawBearing, 0.7);
+            }
+          }
+
+          prevPosRef.current = { lat: data.lat, lng: data.lng, time: now, heading };
 
           const kmh = parseFloat((ms * MS_TO_KMH).toFixed(2));
           const mph = parseFloat((ms * MS_TO_MPH).toFixed(2));
 
-          // ── Update vehicle ────────────────────────────────────────────────
-          setVehicle({
-            id:      1,
-            lat:     data.lat,
-            lng:     data.lng,
-            heading,           // dihitung dari delta posisi
-            speed:   kmh,      // km/h, untuk popup peta
-            label:   "AGV 1",
-          });
-
+          setVehicle({ id: 1, lat: data.lat, lng: data.lng, heading, speed: kmh, label: "Electric Car" });
           setIsTrackingActive(true);
           setSpeedMs(ms);
           setSpeedKmh(kmh);
@@ -181,22 +214,17 @@ export const useGPSTracking = () => {
               .slice(-HISTORY_MAX)
           );
 
-          // ── Reverse geocoding (hanya jika pindah > ~55m) ─────────────────
-          const last        = lastGeocodeRef.current;
-          const shouldUpdate =
-            !last ||
-            Math.abs(data.lat - last.lat) > 0.0005 ||
-            Math.abs(data.lng - last.lng) > 0.0005;
-
-          if (shouldUpdate) {
+          const last = lastGeocodeRef.current;
+          if (!last || Math.abs(data.lat - last.lat) > 0.0005 || Math.abs(data.lng - last.lng) > 0.0005) {
             lastGeocodeRef.current = { lat: data.lat, lng: data.lng };
             setLocationName("Mencari lokasi...");
-            getLocationName(data.lat, data.lng).then(setLocationName);
+            getLocationName(data.lat, data.lng).then(name => {
+              if (mountedRef.current) setLocationName(name);
+            });
           }
         }
 
-        // ── V2: Battery (Voltage Divider) ────────────────────────────────────
-        if (topic === TOPIC_BATTERY) {
+        if (topic === TOPICS.BATTERY) {
           const raw = message.toString().trim();
           try {
             const parsed = JSON.parse(raw);
@@ -209,23 +237,39 @@ export const useGPSTracking = () => {
       } catch (e) {
         console.error("❌ Format data tidak valid:", e);
       }
-    });
+    };
 
-    client.on("disconnect", () => { setIsConnected(false); setIsTrackingActive(false); });
-    client.on("offline",    () => { setIsConnected(false); });
-    client.on("error",      (err) => { console.error("❌ MQTT Error:", err.message); });
+    mqttClient.on("connect",   onConnect);
+    mqttClient.on("reconnect", onReconnect);
+    mqttClient.on("offline",   onOffline);
+    mqttClient.on("close",     onClose);
+    mqttClient.on("error",     onError);
+    mqttClient.on("message",   onMessage);
 
-    return () => { client.end(); };
+    return () => {
+      mountedRef.current = false;
+      mqttClient.off("connect",   onConnect);
+      mqttClient.off("reconnect", onReconnect);
+      mqttClient.off("offline",   onOffline);
+      mqttClient.off("close",     onClose);
+      mqttClient.off("error",     onError);
+      mqttClient.off("message",   onMessage);
+    };
   }, []);
 
-  const resetSpeedStats = () => {
+  const manualReconnect = useCallback(() => {
+    mqttClient.reconnect();
+  }, []);
+
+  const resetSpeedStats = useCallback(() => {
     setMaxSpeedKmh(0);
     setSpeedHistory([]);
-  };
+  }, []);
 
   return {
     vehicle,
-    isConnected,
+    isConnected:     mqttStatus.connected,
+    mqttStatus,
     isTrackingActive,
     battery,
     locationName,
@@ -235,5 +279,6 @@ export const useGPSTracking = () => {
     maxSpeedKmh,
     speedHistory,
     resetSpeedStats,
+    manualReconnect,
   };
 };

@@ -386,17 +386,6 @@ export async function getCompleteRouteWithRateLimit(
   return completeRoute;
 }
 
-// Nearby stops logic
-import { Halte, Koridor } from "@/data/corridorData";
-
-export interface NearestHalte {
-  halte: Halte;
-  koridorId: number;
-  koridorNama: string;
-  koridorWarna: string;
-  distanceMeter: number;
-  walkTimeMinutes: number;
-}
 
 function getDistanceFromLatLonInKm(
   lat1: number,
@@ -424,37 +413,3 @@ function deg2rad(deg: number) {
   return deg * (Math.PI / 180);
 }
 
-export function findNearestStops(
-  userLat: number,
-  userLng: number,
-  koridorData: Koridor[],
-  limit: number = 3
-): NearestHalte[] {
-  const allHalteDistance: NearestHalte[] = [];
-  const WALKING_SPEED_KMH = 4.8;
-
-  koridorData.forEach((koridor) => {
-    koridor.halte.forEach((halte) => {
-      const distKm = getDistanceFromLatLonInKm(
-        userLat,
-        userLng,
-        halte.lat,
-        halte.lng
-      );
-      const walkTime = (distKm / WALKING_SPEED_KMH) * 60;
-
-      allHalteDistance.push({
-        halte: halte,
-        koridorId: koridor.id,
-        koridorNama: koridor.nama,
-        koridorWarna: koridor.warna,
-        distanceMeter: Math.round(distKm * 1000),
-        walkTimeMinutes: Math.round(walkTime),
-      });
-    });
-  });
-
-  return allHalteDistance
-    .sort((a, b) => a.distanceMeter - b.distanceMeter)
-    .slice(0, limit);
-}
