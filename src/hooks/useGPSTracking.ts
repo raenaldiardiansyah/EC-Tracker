@@ -6,7 +6,7 @@ const MS_TO_KMH     = 3.6;
 const MS_TO_MPH     = 2.23694;
 const HISTORY_MAX   = 60;
 const MIN_DIST_M    = 3.0;
-const MIN_DIST_HEAD = 1.5;  // turun dari 2.0 → heading lebih cepat update
+const MIN_DIST_HEAD = 1.5;
 
 export interface SpeedHistory {
   speedKmh:  number;
@@ -21,6 +21,25 @@ export interface MqttStatus {
   error:        string | null;
   attempts:     number;
 }
+
+// ── Votol V3 ─────────────────────────────────────────────────────────────────
+// payload ESP32: {"rpm":1200,"voltage":48.5,"current":15.3}
+export interface PowerData {
+  mode:    string;   // IDLE | BEBAN | JALAN | GAS | GAS_MAX
+  watt:    number;
+  rpm:     number;
+  voltage: number;   // Virtual Pin 2 (referensi)
+  current: number;   // Virtual Pin 3
+}
+
+const determinePowerMode = (current: number, rpm: number): string => {
+  if (current <= 0.5)                               return "IDLE";
+  if (current >  0.5 && rpm < 50)                  return "BEBAN";
+  if (current >  0.5 && rpm >= 50 && current < 30) return "JALAN";
+  if (current >= 30  && current < 100)              return "GAS";
+  return "GAS_MAX";
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 const haversineMeters = (
   lat1: number, lng1: number,
@@ -58,23 +77,23 @@ const smoothHeading = (prev: number, next: number, alpha = 0.7): number => {
 };
 
 export const getHeadingText = (h: number): string => {
-  if (h >= 337.5 || h < 22.5) return "Utara ⬆️";
-  if (h < 67.5)                return "Timur Laut ↗️";
-  if (h < 112.5)               return "Timur ➡️";
-  if (h < 157.5)               return "Tenggara ↘️";
-  if (h < 202.5)               return "Selatan ⬇️";
-  if (h < 247.5)               return "Barat Daya ↙️";
-  if (h < 292.5)               return "Barat ⬅️";
-  return                              "Barat Laut ↖️";
+  if (h >= 337.5 || h < 22.5) return "Utara ";
+  if (h < 67.5)                return "Timur Laut ";
+  if (h < 112.5)               return "Timur ";
+  if (h < 157.5)               return "Tenggara ";
+  if (h < 202.5)               return "Selatan ";
+  if (h < 247.5)               return "Barat Daya ";
+  if (h < 292.5)               return "Barat ";
+  return                              "Barat Laut ";
 };
 
 export const getSpeedText = (speed: number): string => {
-  if (speed <= 0)  return "Berhenti 🛑";
-  if (speed < 20)  return "Sangat Pelan 🐢";
-  if (speed < 40)  return "Pelan 🏙️";
-  if (speed < 60)  return "Sedang 🚗";
-  if (speed < 100) return "Kencang ⚡";
-  return "Sangat Kencang 🚀";
+  if (speed <= 0)  return "Berhenti ";
+  if (speed < 20)  return "Sangat Pelan ";
+  if (speed < 40)  return "Pelan ";
+  if (speed < 60)  return "Sedang ";
+  if (speed < 100) return "Kencang ";
+  return "Sangat Kencang ";
 };
 
 export const getLocationName = async (lat: number, lng: number): Promise<string> => {
@@ -112,6 +131,7 @@ export const useGPSTracking = () => {
   const [speedMs,          setSpeedMs]          = useState(0);
   const [maxSpeedKmh,      setMaxSpeedKmh]      = useState(0);
   const [speedHistory,     setSpeedHistory]     = useState<SpeedHistory[]>([]);
+  const [power,            setPower]            = useState<PowerData | null>(null); // ← Votol V3
   const [mqttStatus,       setMqttStatus]       = useState<MqttStatus>({
     connected:    mqttClient.connected,
     reconnecting: false,
@@ -162,6 +182,8 @@ export const useGPSTracking = () => {
     const onMessage = (topic: string, message: Buffer) => {
       if (!mountedRef.current) return;
       try {
+
+        // ── GPS → V1 ────────────────────────────────────────
         if (topic === TOPICS.GPS) {
           const data = JSON.parse(message.toString());
           if (data.lat == null || data.lng == null) return;
@@ -172,7 +194,7 @@ export const useGPSTracking = () => {
           let ms     = 0;
           let heading = prev?.heading ?? 0;
 
-          // ── Kecepatan ──────────────────────────────────────────────────────
+          // hitung kecepatan
           if (data.speed != null && !isNaN(data.speed)) {
             ms = Math.max(0, parseFloat(data.speed));
           } else if (prev) {
@@ -183,14 +205,10 @@ export const useGPSTracking = () => {
             }
           }
 
-          // ── Heading / Kompas ───────────────────────────────────────────────
-          // course dari ESP32 tidak bergantung pada speed
-          // heading hanya freeze saat benar-benar diam (ms < 0.3)
+          // hitung heading — FIX: hapus blok else if duplikat
           if (data.course != null && !isNaN(data.course) && data.course > 0) {
-              heading = smoothHeading(heading, parseFloat(data.course), 0.7);
-            } else if (prev && ms > 0.3) {
             heading = smoothHeading(heading, parseFloat(data.course), 0.7);
-           } else if (prev && ms > 0.3) {
+          } else if (prev && ms > 0.3) {
             const distM = haversineMeters(prev.lat, prev.lng, data.lat, data.lng);
             if (distM >= MIN_DIST_HEAD) {
               const rawBearing = calcBearing(prev.lat, prev.lng, data.lat, data.lng);
@@ -224,16 +242,36 @@ export const useGPSTracking = () => {
           }
         }
 
+        // ── Baterai → V2 ─────────────────────────────────────
+        // payload ESP32: {"voltage":"50.34","percent":65,"cell_v":"3.356","status":"BAIK"}
         if (topic === TOPICS.BATTERY) {
           const raw = message.toString().trim();
           try {
             const parsed = JSON.parse(raw);
-            setBattery(typeof parsed === "number" ? parsed : parsed.battery ?? null);
+            // FIX: gunakan parsed.percent bukan parsed.battery
+            setBattery(typeof parsed === "number" ? parsed : parsed.percent ?? null);
           } catch {
             const val = parseFloat(raw);
             if (!isNaN(val)) setBattery(val);
           }
         }
+
+        // ── Votol → V3 ───────────────────────────────────────
+        // payload ESP32: {"rpm":1200,"voltage":48.5,"current":15.3}
+        if (topic === TOPICS.VOTOL) {
+          try {
+            const parsed  = JSON.parse(message.toString().trim());
+            const rpm     = parseFloat(parsed.rpm)     || 0;
+            const voltage = parseFloat(parsed.voltage) || 0;  // Virtual Pin 2 (referensi)
+            const current = parseFloat(parsed.current) || 0;  // Virtual Pin 3
+            const watt    = parseFloat((voltage * current).toFixed(1));
+            const mode    = determinePowerMode(current, rpm);
+            setPower({ mode, watt, rpm, voltage, current });
+          } catch {
+            console.error("❌ Format data Votol tidak valid");
+          }
+        }
+
       } catch (e) {
         console.error("❌ Format data tidak valid:", e);
       }
@@ -280,5 +318,6 @@ export const useGPSTracking = () => {
     speedHistory,
     resetSpeedStats,
     manualReconnect,
+    power,           // ← Votol V3
   };
 };

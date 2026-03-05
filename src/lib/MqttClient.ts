@@ -14,6 +14,7 @@ const MQTT_OPTIONS: mqtt.IClientOptions = {
 export const TOPICS = {
   GPS:     "EC/ElectricCar/vpin/V1",
   BATTERY: "EC/ElectricCar/vpin/V2",
+  VOTOL:   "EC/ElectricCar/vpin/V3",  // Votol: rpm, voltage, current
 } as const;
 
 export const mqttClient = mqtt.connect(BROKER_URL, MQTT_OPTIONS);

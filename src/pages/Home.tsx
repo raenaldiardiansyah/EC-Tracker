@@ -9,15 +9,11 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BATTERY UTILS
-// V2 publish langsung persentase (0–100) dari ESP32.
-// Konversi voltage divider → % dilakukan di sisi ESP32, bukan di sini.
-// ─────────────────────────────────────────────────────────────────────────────
+
 const getBatteryColor = (pct: number): string => {
-  if (pct > 50) return "#22d3ee";  // cyan — normal
-  if (pct > 20) return "#f59e0b";  // amber — sedang
-  return "#ef4444";                 // red   — kritis
+  if (pct > 50) return "#22d3ee";
+  if (pct > 20) return "#f59e0b";
+  return "#ef4444";
 };
 
 const getBatteryIcon = (pct: number) => {
@@ -32,21 +28,17 @@ const getBatteryText = (pct: number): string => {
   return "Kritis!";
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TYPES
-// ─────────────────────────────────────────────────────────────────────────────
-type LogType = "info" | "gps" | "battery" | "error";
+
+type LogType = "info" | "gps" | "battery" | "error" | "votol";
 interface LogEntry { time: string; message: string; type: LogType; }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT
-// ─────────────────────────────────────────────────────────────────────────────
+
 const Home = () => {
   const {
     vehicle,
     isConnected,
     isTrackingActive,
-    battery,        // langsung % (0–100) dari ESP32 via V2
+    battery,
     locationName,
     speedKmh,
     speedMph,
@@ -54,6 +46,7 @@ const Home = () => {
     maxSpeedKmh,
     speedHistory,
     resetSpeedStats,
+    power,
   } = useGPSTracking();
 
   const battColor   = battery !== null ? getBatteryColor(battery) : "#475569";
@@ -68,7 +61,6 @@ const Home = () => {
     if (showLogs) logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs, showLogs]);
 
-  // Log GPS
   useEffect(() => {
     if (!vehicle) return;
     const time = new Date().toLocaleTimeString("id-ID");
@@ -79,7 +71,6 @@ const Home = () => {
     }]);
   }, [vehicle, locationName, speedKmh]);
 
-  // Log Battery
   useEffect(() => {
     if (battery === null) return;
     const time = new Date().toLocaleTimeString("id-ID");
@@ -90,20 +81,30 @@ const Home = () => {
     }]);
   }, [battery]);
 
-  // Log MQTT
   useEffect(() => {
     const time = new Date().toLocaleTimeString("id-ID");
     setLogs(prev => [...prev, {
       time,
-      message: isConnected ? "[MQTT] Terhubung ke broker.hivemq.com" : "[MQTT] Koneksi terputus",
+      message: isConnected ? "[MQTT] Terhubung ke broker.emqx.io" : "[MQTT] Koneksi terputus",
       type: isConnected ? "info" : "error",
     }]);
   }, [isConnected]);
+
+  useEffect(() => {
+    if (!power) return;
+    const time = new Date().toLocaleTimeString("id-ID");
+    setLogs(prev => [...prev.slice(-100), {
+      time,
+      message: `[V3] ${power.mode} | ${Math.round(power.watt)}W | ${power.rpm}rpm | ${power.voltage.toFixed(1)}V × ${power.current.toFixed(1)}A`,
+      type: "votol",
+    }]);
+  }, [power]);
 
   const getLogColor = (type: LogType) => {
     if (type === "gps")     return "text-emerald-400";
     if (type === "battery") return "text-amber-400";
     if (type === "error")   return "text-red-400";
+    if (type === "votol")   return "text-orange-400";
     return "text-cyan-400";
   };
 
@@ -120,7 +121,7 @@ const Home = () => {
             ))}
           </div>
           <span className="font-bold text-xs tracking-widest text-cyan-300 uppercase">EC Tracker</span>
-          <span className="text-[9px] text-slate-600 tracking-widest hidden sm:block">AGV-01</span>
+          <span className="text-[9px] text-slate-600 tracking-widest hidden sm:block">EC-01</span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-sm border tracking-wider ${
@@ -137,7 +138,7 @@ const Home = () => {
         </div>
       </div>
 
-      {/* ── BATTERY WARNING — tampil di semua tab saat kritis ────────────────── */}
+      {/* ── BATTERY WARNING ──────────────────────────────────────────────────── */}
       {battery !== null && battery <= 20 && (
         <div className="flex items-center gap-1.5 px-3 py-1 bg-red-950/80 border-b border-red-700/60 shrink-0 animate-pulse">
           <AlertTriangle className="w-3 h-3 text-red-400 shrink-0" />
@@ -179,7 +180,6 @@ const Home = () => {
       {/* ── TAB CONTENT ──────────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-hidden">
 
-        {/* TAB PETA */}
         {activeTab === "map" && (
           <div className="relative h-full">
             <MapContainer
@@ -187,7 +187,6 @@ const Home = () => {
               isTrackingActive={isTrackingActive}
             />
 
-            {/* Overlay lokasi */}
             {vehicle && (
               <div className="absolute top-3 left-3 right-3 z-10 pointer-events-none">
                 <div className="bg-[#0d1220]/95 backdrop-blur-sm border border-cyan-900/60 rounded-sm px-3 py-2 shadow-xl flex items-center gap-2">
@@ -200,7 +199,6 @@ const Home = () => {
               </div>
             )}
 
-            {/* Overlay baterai kritis di dalam peta */}
             {battery !== null && battery <= 20 && vehicle && (
               <div className="absolute top-14 left-3 right-3 z-10 pointer-events-none">
                 <div className="bg-red-600/90 backdrop-blur-sm border border-red-500/60 rounded-sm px-3 py-2 shadow-xl flex items-center gap-2">
@@ -212,7 +210,6 @@ const Home = () => {
               </div>
             )}
 
-            {/* Menunggu GPS */}
             {!vehicle && (
               <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
                 <div className="bg-[#0d1220]/90 backdrop-blur-sm border border-cyan-900/40 rounded-sm px-3 py-2 shadow-lg flex items-center gap-2">
@@ -229,7 +226,6 @@ const Home = () => {
           </div>
         )}
 
-        {/* TAB SPEED */}
         {activeTab === "speed" && (
           <div className="h-full overflow-y-auto flex justify-center px-4 py-4">
             <SpeedPanel
@@ -242,12 +238,13 @@ const Home = () => {
               isConnected={isConnected}
               isTrackingActive={isTrackingActive}
               onResetStats={resetSpeedStats}
+              power={power}
             />
           </div>
         )}
       </div>
 
-      {/* ── INFO STRIP 3 kolom — hanya tab peta ─────────────────────────────── */}
+      {/* ── INFO STRIP ───────────────────────────────────────────────────────── */}
       {activeTab === "map" && (
         <div className="grid grid-cols-3 gap-px bg-cyan-900/20 border-t border-cyan-900/40 shrink-0">
           <div className="flex items-center gap-1.5 bg-[#0d1220] px-2.5 py-1.5">
@@ -305,9 +302,10 @@ const Home = () => {
 
       {/* ── SERIAL MONITOR ───────────────────────────────────────────────────── */}
       <div className="bg-[#0d1220] border-t border-cyan-900/40 shrink-0">
-        <button
+        {/* ✅ Changed outer <button> to <div> to fix button-in-button nesting */}
+        <div
           onClick={() => setShowLogs(!showLogs)}
-          className="w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-bold tracking-widest uppercase text-slate-500 hover:text-cyan-300 transition-colors"
+          className="w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-bold tracking-widest uppercase text-slate-500 hover:text-cyan-300 transition-colors cursor-pointer"
         >
           <div className="flex items-center gap-1.5">
             {isTrackingActive && (
@@ -327,7 +325,7 @@ const Home = () => {
             <span className="text-[9px] text-slate-700">{logs.length} lines</span>
             {showLogs ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
           </div>
-        </button>
+        </div>
 
         {showLogs && (
           <div className="h-36 overflow-y-auto px-3 pb-3 text-[10px] bg-[#040608] space-y-0.5 border-t border-cyan-900/20">
