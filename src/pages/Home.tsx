@@ -95,8 +95,7 @@ const Home = () => {
     const time = new Date().toLocaleTimeString("id-ID");
     setLogs(prev => [...prev.slice(-100), {
       time,
-      message: `[V3] ${power.mode} | ${Math.round(power.watt)}W | ${power.rpm}rpm | ${power.voltage.toFixed(1)}V × ${power.current.toFixed(1)}A`,
-      type: "votol",
+      message: `[V3] ${power.mode} | ${Math.round(power.watt)}W | ${power.voltage.toFixed(1)}V × ${power.current.toFixed(1)}A`,      type: "votol",
     }]);
   }, [power]);
 

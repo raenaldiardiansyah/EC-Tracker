@@ -26,7 +26,6 @@ const MapContainer = ({
   const trailRef          = useRef<Map<number, L.Polyline>>(new Map());
   const trailPointsRef    = useRef<Map<number, [number, number][]>>(new Map());
 
-  
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
 
@@ -73,13 +72,12 @@ const MapContainer = ({
     };
   }, []);
 
-  // ── Update marker & trail ─────────────────────────────────────────────────
+  // ── Update marker & trail 
   useEffect(() => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
 
     vehicles.forEach((vehicle) => {
-      // ── Guard: pastikan lat & lng valid ────────────────────────────────
       if (
         vehicle.lat == null || vehicle.lng == null ||
         isNaN(vehicle.lat)  || isNaN(vehicle.lng)
@@ -88,11 +86,10 @@ const MapContainer = ({
       const id      = vehicle.id;
       const lat     = vehicle.lat;
       const lng     = vehicle.lng;
-      const heading = vehicle.heading ?? 0;   // dihitung dari delta GPS di hook
-      const speed   = vehicle.speed   ?? 0;   // dihitung dari delta GPS di hook
+      const heading = vehicle.heading ?? 0;
+      const speed   = vehicle.speed   ?? 0;
       const label   = vehicle.label   ?? `AGV ${id}`;
 
-      // ── Icon panah sesuai heading ───────────────────────────────────────
       const arrowIcon = L.divIcon({
         className: "",
         html: `
@@ -162,7 +159,6 @@ const MapContainer = ({
         vehicleMarkersRef.current.set(id, marker);
       }
 
-      
       if (!trailPointsRef.current.has(id)) {
         trailPointsRef.current.set(id, []);
       }
@@ -180,14 +176,24 @@ const MapContainer = ({
         trailRef.current.set(id, trail);
       }
 
-      {/* Auto follow */}
       if (isTrackingActive) {
         map.panTo([lat, lng], { animate: true, duration: 0.5 });
       }
     });
   }, [vehicles, isTrackingActive]);
 
-  {/*Bersihkan trail saat tracking stop*/}
+
+  useEffect(() => {
+    if (vehicles.length === 0) {
+      trailPointsRef.current.clear();
+      trailRef.current.forEach((trail) => trail.remove());
+      trailRef.current.clear();
+      vehicleMarkersRef.current.forEach((marker) => marker.remove());
+      vehicleMarkersRef.current.clear();
+    }
+  }, [vehicles]);
+
+  // ─Bersihkan trail saat tracking stop
   useEffect(() => {
     if (!isTrackingActive) {
       trailPointsRef.current.clear();

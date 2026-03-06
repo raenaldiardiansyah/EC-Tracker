@@ -22,24 +22,22 @@ export interface MqttStatus {
   attempts:     number;
 }
 
-// ── Votol V3 ─────────────────────────────────────────────────────────────────
-// payload ESP32: {"rpm":1200,"voltage":48.5,"current":15.3}
+// ── ACS758 150A + Voltage Divider → V3 ───────────────────────────────────
 export interface PowerData {
-  mode:    string;   // IDLE | BEBAN | JALAN | GAS | GAS_MAX
-  watt:    number;
-  rpm:     number;
-  voltage: number;   // Virtual Pin 2 (referensi)
-  current: number;   // Virtual Pin 3
+  current: number;  // A  — dari ACS758 150A (V3)
+  voltage: number;  // V  — dari voltage divider (V2)
+  watt:    number;  // W  — voltage × current
+  mode:    string;  // IDLE | RENDAH | SEDANG | TINGGI | MAKS
 }
 
-const determinePowerMode = (current: number, rpm: number): string => {
-  if (current <= 0.5)                               return "IDLE";
-  if (current >  0.5 && rpm < 50)                  return "BEBAN";
-  if (current >  0.5 && rpm >= 50 && current < 30) return "JALAN";
-  if (current >= 30  && current < 100)              return "GAS";
-  return "GAS_MAX";
+const determinePowerMode = (current: number): string => {
+  if (current <= 0.3)                    return "IDLE";
+  if (current >  0.3 && current <  10)  return "RENDAH";
+  if (current >= 10  && current <  50)  return "SEDANG";
+  if (current >= 50  && current <  100) return "TINGGI";
+  return "MAKS";
 };
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────
 
 const haversineMeters = (
   lat1: number, lng1: number,
@@ -131,7 +129,7 @@ export const useGPSTracking = () => {
   const [speedMs,          setSpeedMs]          = useState(0);
   const [maxSpeedKmh,      setMaxSpeedKmh]      = useState(0);
   const [speedHistory,     setSpeedHistory]     = useState<SpeedHistory[]>([]);
-  const [power,            setPower]            = useState<PowerData | null>(null); // ← Votol V3
+  const [power,            setPower]            = useState<PowerData | null>(null);
   const [mqttStatus,       setMqttStatus]       = useState<MqttStatus>({
     connected:    mqttClient.connected,
     reconnecting: false,
@@ -142,6 +140,7 @@ export const useGPSTracking = () => {
   const prevPosRef     = useRef<{ lat: number; lng: number; time: number; heading: number } | null>(null);
   const lastGeocodeRef = useRef<{ lat: number; lng: number } | null>(null);
   const mountedRef     = useRef(true);
+  const voltageRef     = useRef<number>(0); // ← simpan voltage dari V2 untuk hitung watt
 
   useEffect(() => {
     mountedRef.current = true;
@@ -183,7 +182,7 @@ export const useGPSTracking = () => {
       if (!mountedRef.current) return;
       try {
 
-        // ── GPS → V1 ────────────────────────────────────────
+        // ── GPS → V1 ─────────────────────────────────────────
         if (topic === TOPICS.GPS) {
           const data = JSON.parse(message.toString());
           if (data.lat == null || data.lng == null) return;
@@ -194,7 +193,6 @@ export const useGPSTracking = () => {
           let ms     = 0;
           let heading = prev?.heading ?? 0;
 
-          // hitung kecepatan
           if (data.speed != null && !isNaN(data.speed)) {
             ms = Math.max(0, parseFloat(data.speed));
           } else if (prev) {
@@ -205,7 +203,6 @@ export const useGPSTracking = () => {
             }
           }
 
-          // hitung heading — FIX: hapus blok else if duplikat
           if (data.course != null && !isNaN(data.course) && data.course > 0) {
             heading = smoothHeading(heading, parseFloat(data.course), 0.7);
           } else if (prev && ms > 0.3) {
@@ -233,7 +230,7 @@ export const useGPSTracking = () => {
           );
 
           const last = lastGeocodeRef.current;
-          if (!last || Math.abs(data.lat - last.lat) > 0.0005 || Math.abs(data.lng - last.lng) > 0.0005) {
+          if (!last || Math.abs(data.lat - last.lat) > 0.001 || Math.abs(data.lng - last.lng) > 0.0005) {
             lastGeocodeRef.current = { lat: data.lat, lng: data.lng };
             setLocationName("Mencari lokasi...");
             getLocationName(data.lat, data.lng).then(name => {
@@ -243,32 +240,35 @@ export const useGPSTracking = () => {
         }
 
         // ── Baterai → V2 ─────────────────────────────────────
-        // payload ESP32: {"voltage":"50.34","percent":65,"cell_v":"3.356","status":"BAIK"}
+        // payload: {"voltage":"50.34","percent":65,"cell_v":"3.356","status":"BAIK"}
         if (topic === TOPICS.BATTERY) {
           const raw = message.toString().trim();
           try {
             const parsed = JSON.parse(raw);
-            // FIX: gunakan parsed.percent bukan parsed.battery
             setBattery(typeof parsed === "number" ? parsed : parsed.percent ?? null);
+
+            // ← simpan voltage ke ref untuk hitung watt di V3
+            const v = parseFloat(parsed.voltage);
+            if (!isNaN(v) && v > 0) voltageRef.current = v;
+
           } catch {
             const val = parseFloat(raw);
             if (!isNaN(val)) setBattery(val);
           }
         }
 
-        // ── Votol → V3 ───────────────────────────────────────
-        // payload ESP32: {"rpm":1200,"voltage":48.5,"current":15.3}
+        // ── ACS758 150A → V3 ─────────────────────────────────
+        // payload: {"current":"15.30"}
         if (topic === TOPICS.VOTOL) {
           try {
             const parsed  = JSON.parse(message.toString().trim());
-            const rpm     = parseFloat(parsed.rpm)     || 0;
-            const voltage = parseFloat(parsed.voltage) || 0;  // Virtual Pin 2 (referensi)
-            const current = parseFloat(parsed.current) || 0;  // Virtual Pin 3
-            const watt    = parseFloat((voltage * current).toFixed(1));
-            const mode    = determinePowerMode(current, rpm);
-            setPower({ mode, watt, rpm, voltage, current });
+            const current = parseFloat(parsed.current) || 0;
+            const voltage = voltageRef.current;                          // dari V2
+            const watt    = parseFloat((voltage * current).toFixed(1)); // P = V × I
+            const mode    = determinePowerMode(current);
+            setPower({ current, voltage, watt, mode });
           } catch {
-            console.error("❌ Format data Votol tidak valid");
+            console.error("❌ Format data ACS758 tidak valid");
           }
         }
 
@@ -318,6 +318,6 @@ export const useGPSTracking = () => {
     speedHistory,
     resetSpeedStats,
     manualReconnect,
-    power,           // ← Votol V3
+    power, // { current, voltage, watt, mode }
   };
 };

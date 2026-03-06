@@ -1,10 +1,8 @@
 /**
  * MQTT SIMULATOR — TESTING ONLY
  * Hapus file ini setelah ESP32 siap.
- * Payload baterai disesuaikan dengan ESP32 v2.3:
- * {"voltage":"50.34","percent":65,"cell_v":"3.356","status":"BAIK"}
- * Payload Votol V3:
- * {"rpm":1200,"voltage":48.5,"current":15.3}
+ * Payload baterai: {"voltage":"50.34","percent":65,"cell_v":"3.356","status":"BAIK"}
+ * Payload ACS758 V3: {"current":"15.30"}
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -19,20 +17,20 @@ import {
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// KONFIGURASI — harus sama dengan useGPSTracking.ts & ESP32
+// KONFIGURASI
 // ─────────────────────────────────────────────────────────────────────────────
 const BROKER_URL  = "wss://broker.emqx.io:8084/mqtt";
 const TOPIC_GPS   = "EC/ElectricCar/vpin/V1";
 const TOPIC_BATT  = "EC/ElectricCar/vpin/V2";
-const TOPIC_VOTOL = "EC/ElectricCar/vpin/V3";  // ← Votol V3
-const TICK_MS     = 1000; // 1Hz — seperti GPS module NEO-6M
+const TOPIC_ACS   = "EC/ElectricCar/vpin/V3"; // ← ACS758 150A
+const TICK_MS     = 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BATERAI LiFePO4 48V 15S — sesuai ESP32 v2.3
+// BATERAI LiFePO4 48V 15S
 // ─────────────────────────────────────────────────────────────────────────────
-const VBATT_MAX  = 54.75; // 15 sel × 3.65V → 100%
-const VBATT_MIN  = 42.00; // 15 sel × 2.80V → 0%
-const CELLS      = 15;
+const VBATT_MAX = 54.75;
+const VBATT_MIN = 42.00;
+const CELLS     = 15;
 
 const voltToPercent = (v: number): number => {
   if (v >= VBATT_MAX) return 100;
@@ -49,7 +47,7 @@ const voltToStatus = (v: number): string => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RUTE — area Telkom University Bandung
+// RUTE — Telkom University Bandung
 // ─────────────────────────────────────────────────────────────────────────────
 const ROUTE = [
   { lat: -6.9735, lng: 107.6301 },
@@ -67,30 +65,24 @@ const ROUTE = [
 const MS_TO_KMH = 3.6;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VOTOL — simulasi arus & daya berdasarkan kecepatan
+// ACS758 — simulasi arus berdasarkan kecepatan
 // ─────────────────────────────────────────────────────────────────────────────
-const simVotol = (speedMs: number, voltage: number): { rpm: number; current: number } => {
-  // RPM kasar: anggap gear ratio → ~20 rpm per km/h
-  const rpm = Math.round(speedMs * MS_TO_KMH * 20);
-
-  // Arus: idle ~2A, jalan normal ~15A, gas penuh ~80A
-  let current = 2;
+const simCurrent = (speedMs: number): number => {
+  let current = 1.5;
   if (speedMs <= 0)     current = 1.5;
-  else if (speedMs < 2) current = 5 + speedMs * 3;
+  else if (speedMs < 2) current = 5  + speedMs * 3;
   else if (speedMs < 6) current = 15 + speedMs * 4;
   else                  current = 40 + speedMs * 5;
 
-  // Tambah sedikit noise realistis
+  // noise realistis
   current = parseFloat((current + (Math.random() - 0.5) * 2).toFixed(1));
-  current = Math.max(0, current);
-
-  return { rpm, current };
+  return Math.max(0, current);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
 // ─────────────────────────────────────────────────────────────────────────────
-type LogType    = "info" | "gps" | "battery" | "error" | "system" | "votol";
+type LogType    = "info" | "gps" | "battery" | "error" | "system" | "acs";
 type MqttStatus = "connecting" | "connected" | "error";
 
 interface LogEntry {
@@ -141,7 +133,6 @@ const getLocationName = async (lat: number, lng: number): Promise<string> => {
   } catch { return "Gagal mendapat lokasi"; }
 };
 
-// battery icon & color — berbasis persen (0-100)
 const getBatteryIcon  = (pct: number) => pct > 50 ? BatteryFull : pct > 20 ? BatteryMedium : BatteryLow;
 const getBatteryColor = (pct: number) => pct > 50 ? "#22d3ee"  : pct > 20 ? "#f59e0b"     : "#ef4444";
 const getBatteryText  = (pct: number) => pct > 50 ? "Normal"   : pct > 20 ? "Sedang"      : "Kritis!";
@@ -151,7 +142,7 @@ const getLogColor = (type: LogType): string => {
   if (type === "battery") return "text-amber-400";
   if (type === "error")   return "text-red-400";
   if (type === "system")  return "text-cyan-400";
-  if (type === "votol")   return "text-orange-400";
+  if (type === "acs")     return "text-orange-400";
   return "text-blue-400";
 };
 
@@ -159,22 +150,24 @@ const getLogColor = (type: LogType): string => {
 // COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 const MQTTSimulator = () => {
-  const [mqttStatus,    setMqttStatus]    = useState<MqttStatus>("connecting");
-  const [isRunning,     setIsRunning]     = useState(false);
-  const [simSpeed,      setSimSpeed]      = useState(2);
+  const [mqttStatus,   setMqttStatus]   = useState<MqttStatus>("connecting");
+  const [isRunning,    setIsRunning]    = useState(false);
+  const [simSpeed,     setSimSpeed]     = useState(2);
 
-  // baterai simulasi — dalam Volt (42-54.75V), persen dihitung dari volt
-  const [battVolt,      setBattVolt]      = useState(50.40); // mulai ~65%
+  const [battVolt,     setBattVolt]     = useState(50.40);
   const battPct   = voltToPercent(battVolt);
   const battColor = getBatteryColor(battPct);
   const BattIcon  = getBatteryIcon(battPct);
 
-  const [publishCount,  setPublishCount]  = useState(0);
-  const [locationName,  setLocationName]  = useState("Menunggu GPS...");
-  const [vehicle,       setVehicle]       = useState<Vehicle | null>(null);
-  const [logs,          setLogs]          = useState<LogEntry[]>([]);
-  const [showLogs,      setShowLogs]      = useState(true);
-  const [activeTab,     setActiveTab]     = useState<"map" | "control">("map");
+  // arus terakhir untuk ditampilkan di UI
+  const [lastCurrent,  setLastCurrent]  = useState(0);
+
+  const [publishCount, setPublishCount] = useState(0);
+  const [locationName, setLocationName] = useState("Menunggu GPS...");
+  const [vehicle,      setVehicle]      = useState<Vehicle | null>(null);
+  const [logs,         setLogs]         = useState<LogEntry[]>([]);
+  const [showLogs,     setShowLogs]     = useState(true);
+  const [activeTab,    setActiveTab]    = useState<"map" | "control">("map");
 
   const clientRef  = useRef<MqttClient | null>(null);
   const tickRef    = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -219,7 +212,7 @@ const MQTTSimulator = () => {
     client.publish(topic, payload, { qos: 0, retain: false }, (err) => {
       if (!err) {
         setPublishCount(c => c + 1);
-        const label = topic === TOPIC_BATT ? "V2" : topic === TOPIC_VOTOL ? "V3" : "V1";
+        const label = topic === TOPIC_BATT ? "V2" : topic === TOPIC_ACS ? "V3" : "V1";
         addLog(`[${label}] ${payload}`, type);
       } else {
         addLog(`[ERROR] ${err.message}`, "error");
@@ -256,7 +249,6 @@ const MQTTSimulator = () => {
       const speedMs  = simSpeed;
 
       prevPosRef.current = { lat: newLat, lng: newLng, time: Date.now() };
-
       setVehicle({ id: 1, lat: newLat, lng: newLng, heading, speed: speedKmh, label: "EC SIM" });
 
       // Reverse geocoding
@@ -277,50 +269,40 @@ const MQTTSimulator = () => {
       }
 
       // Publish V1 — GPS
-      const gpsPayload = JSON.stringify({
+      publish(TOPIC_GPS, JSON.stringify({
         lat:    parseFloat(newLat.toFixed(7)),
         lng:    parseFloat(newLng.toFixed(7)),
         speed:  parseFloat(speedMs.toFixed(3)),
         course: parseFloat(heading.toFixed(2)),
-      });
-      publish(TOPIC_GPS, gpsPayload, "gps");
+      }), "gps");
 
       // Publish V2 — Baterai setiap ~5 detik (20% chance per tick)
       if (Math.random() < 0.2) {
         setBattVolt(prev => {
-          const newVolt    = parseFloat(Math.max(VBATT_MIN, prev - 0.02).toFixed(3));
-          const pct        = voltToPercent(newVolt);
-          const cellV      = parseFloat((newVolt / CELLS).toFixed(3));
-          const status     = voltToStatus(newVolt);
+          const newVolt = parseFloat(Math.max(VBATT_MIN, prev - 0.02).toFixed(3));
+          const pct     = voltToPercent(newVolt);
+          const cellV   = parseFloat((newVolt / CELLS).toFixed(3));
+          const status  = voltToStatus(newVolt);
 
-          const battPayload = JSON.stringify({
+          publish(TOPIC_BATT, JSON.stringify({
             voltage: newVolt.toFixed(2),
             percent: pct,
             cell_v:  cellV.toFixed(3),
             status,
-          });
-
-          publish(TOPIC_BATT, battPayload, "battery");
+          }), "battery");
           addLog(`[BATT] ${newVolt.toFixed(2)}V | ${pct}% | ${status}${pct <= 20 ? " ⚠" : ""}`, "battery");
           return newVolt;
         });
       }
 
-      // Publish V3 — Votol (setiap tick)
-      setBattVolt(prev => {
-        const { rpm, current } = simVotol(speedMs, prev);
-        const watt = parseFloat((prev * current).toFixed(1));
+      // Publish V3 — ACS758 (setiap tick, hanya current)
+      const current = simCurrent(speedMs);
+      setLastCurrent(current);
 
-        const votolPayload = JSON.stringify({
-          rpm,
-          voltage: parseFloat(prev.toFixed(2)),
-          current,
-        });
-
-        publish(TOPIC_VOTOL, votolPayload, "votol");
-        addLog(`[V3] ${watt}W | ${rpm}rpm | ${prev.toFixed(1)}V × ${current}A`, "votol");
-        return prev; // tidak ubah volt di sini, sudah dihandle blok baterai
-      });
+      publish(TOPIC_ACS, JSON.stringify({
+        current: current.toFixed(2),
+      }), "acs");
+      addLog(`[V3] ACS758 | ${current.toFixed(1)} A`, "acs");
 
     }, TICK_MS);
 
@@ -393,11 +375,9 @@ const MQTTSimulator = () => {
       {/* ── TAB CONTENT ────────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-hidden">
 
-        {/* TAB PETA */}
         {activeTab === "map" && (
           <div className="relative h-full">
             <MapContainer vehicles={vehicle ? [vehicle] : []} isTrackingActive={isRunning} />
-
             {vehicle && (
               <div className="absolute top-3 left-3 right-3 z-10 pointer-events-none">
                 <div className="bg-[#0d1220]/95 backdrop-blur-sm border border-cyan-900/60 rounded-sm px-3 py-2 shadow-xl flex items-center gap-2">
@@ -406,7 +386,6 @@ const MQTTSimulator = () => {
                 </div>
               </div>
             )}
-
             {!vehicle && (
               <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
                 <div className="bg-[#0d1220]/90 backdrop-blur-sm border border-cyan-900/40 rounded-sm px-3 py-2 shadow-lg flex items-center gap-2">
@@ -423,7 +402,6 @@ const MQTTSimulator = () => {
           </div>
         )}
 
-        {/* TAB KONTROL */}
         {activeTab === "control" && (
           <div className="h-full overflow-y-auto px-4 py-4 space-y-3">
 
@@ -472,7 +450,7 @@ const MQTTSimulator = () => {
               </div>
             </div>
 
-            {/* Info 4 kolom (tambah Votol) */}
+            {/* Info 4 kolom */}
             <div className="grid grid-cols-4 gap-2">
               <div className="flex flex-col items-center gap-1 bg-[#0d1220] border border-cyan-900/30 rounded-sm p-2">
                 <MapPin className="w-3.5 h-3.5 text-cyan-500" />
@@ -489,9 +467,9 @@ const MQTTSimulator = () => {
               </div>
               <div className="flex flex-col items-center gap-1 bg-[#0d1220] border border-orange-900/30 rounded-sm p-2">
                 <Zap className="w-3.5 h-3.5 text-orange-400" />
-                <span className="text-[8px] text-slate-600 uppercase tracking-widest">Votol</span>
+                <span className="text-[8px] text-slate-600 uppercase tracking-widest">ACS758</span>
                 <span className="text-[9px] font-bold text-orange-400">
-                  {isRunning ? `${(battVolt * simVotol(simSpeed, battVolt).current / 1000).toFixed(1)}kW` : "--"}
+                  {isRunning ? `${lastCurrent.toFixed(1)} A` : "-- A"}
                 </span>
               </div>
               <div className="flex flex-col items-center gap-1 bg-[#0d1220] border border-cyan-900/30 rounded-sm p-2">
@@ -515,14 +493,14 @@ const MQTTSimulator = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-orange-500 font-bold">V3</span>
-                  <span className="text-slate-500 truncate">{TOPIC_VOTOL}</span>
+                  <span className="text-slate-500 truncate">{TOPIC_ACS}</span>
                 </div>
               </div>
               {/* Contoh payload V3 */}
               <div className="mt-1 bg-black/40 rounded-sm px-2 py-1.5 font-mono text-[9px] text-slate-500 leading-relaxed">
-                <span className="text-slate-600">// payload V3 (Votol):</span><br/>
+                <span className="text-slate-600">// payload V3 (ACS758 150A):</span><br/>
                 <span className="text-orange-500">
-                  {`{"rpm":${Math.round(simSpeed * MS_TO_KMH * 20)},"voltage":${battVolt.toFixed(2)},"current":${simVotol(simSpeed, battVolt).current}}`}
+                  {`{"current":"${lastCurrent.toFixed(2)}"}`}
                 </span>
               </div>
             </div>

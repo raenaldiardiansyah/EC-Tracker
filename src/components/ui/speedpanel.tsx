@@ -14,19 +14,19 @@ interface SpeedPanelProps {
   isConnected:      boolean;
   isTrackingActive: boolean;
   onResetStats?:    () => void;
-  power?:           PowerData | null; // ← Votol V3
+  power?:           PowerData | null;
 }
 
 // ── Konfigurasi warna & label per mode ───────────────────────────────────────
 const MODE_CONFIG: Record<string, { color: string; label: string }> = {
-  IDLE:    { color: "#475569", label: "■ IDLE"      },
-  BEBAN:   { color: "#f59e0b", label: "◈ BEBAN"     },
-  JALAN:   { color: "#06b6d4", label: "▶ JALAN"     },
-  GAS:     { color: "#f97316", label: "▶▶ GAS"      },
-  GAS_MAX: { color: "#ef4444", label: "▶▶▶ GAS MAX" },
+  IDLE:   { color: "#475569", label: "■ IDLE"    },
+  RENDAH: { color: "#06b6d4", label: "▶ RENDAH"  },
+  SEDANG: { color: "#f59e0b", label: "▶▶ SEDANG" },
+  TINGGI: { color: "#f97316", label: "▶▶ TINGGI" },
+  MAKS:   { color: "#ef4444", label: "▶▶▶ MAKS"  },
 };
 
-const WATT_MAX = 7200; // EM-150S max ~150A × 48V = 7200W
+const WATT_MAX = 7200; // 150A × 48V = 7200W
 
 // ── Komponen badge mode ───────────────────────────────────────────────────────
 function ModeBadge({ mode }: { mode: string }) {
@@ -206,7 +206,7 @@ export function SpeedPanel({
         </div>
       </div>
 
-      {/* ── Status MQTT + mode berkendara ───────────────────────────────────── */}
+      {/* ── Status MQTT + mode ──────────────────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <span style={{
           fontSize: 10, fontFamily: "monospace", padding: "2px 10px", borderRadius: 99,
@@ -267,7 +267,7 @@ export function SpeedPanel({
         ))}
       </div>
 
-      {/* ── Watt Bar dari Votol V3 ───────────────────────────────────────────── */}
+      {/* ── Watt Bar ─────────────────────────────────────────────────────────── */}
       <div style={{ marginBottom: 16, padding: "10px 12px", background: "#0d1e35", borderRadius: 12, border: "1px solid #1a2840" }}>
         <WattBar
           watt={power?.watt    ?? 0}
@@ -314,7 +314,7 @@ export function SpeedPanel({
           { label: "MAKS",  value: maxDisplay + " " + unitLabel,                                        color: "#06b6d4" },
           { label: "RATA²", value: avg.toFixed(1) + " " + unitLabel,                                    color: "#818cf8" },
           { label: "ARAH",  value: heading !== undefined ? getHeadingText(heading).split(" ")[0] : "—", color: "#94a3b8" },
-          { label: "RPM",   value: power ? String(power.rpm) : "--",                                    color: "#f97316" },
+          { label: "ARUS",  value: power ? `${power.current.toFixed(1)} A` : "-- A",                   color: "#f97316" },
         ].map((s, i) => (
           <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 4px", background: "#0d1e35", borderRadius: 10, border: "1px solid #1a2840" }}>
             <span style={{ fontSize: 7, color: "#1e4060", fontFamily: "monospace", letterSpacing: 1 }}>{s.label}</span>
